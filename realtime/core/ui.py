@@ -110,6 +110,8 @@ class UI:
             sub = f"{e.get('time', '')}  ·  ID {ids}"
             if e.get("confidence") is not None:
                 sub += f"  ·  {e['confidence']:.2f}"
+            if e.get("detail"):
+                sub += f"  ·  {e['detail']}"
             bar = int(4 * s)
             if new:
                 d.rectangle([pad, y, pad + bar - 1, y + 2 * lh - int(6 * s)], fill=P_NEW)

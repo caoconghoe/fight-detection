@@ -95,7 +95,8 @@ def main():
                 for e in events:
                     e["time"], e["t"] = datetime.now().strftime("%H:%M:%S"), time.time()
                     alerts.appendleft(e)
-                    print(f"[{e['time']}] {e['type']} | ID {e['ids']} | conf {e['confidence']}")
+                    print(f"[{e['time']}] {e['type']} | ID {e['ids']} | conf {e['confidence']}"
+                          + (f" | {e['detail']}" if e.get("detail") else ""))
 
             proc.tick()
             if sampled:
