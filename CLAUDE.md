@@ -1,0 +1,544 @@
+# CLAUDE.md – Hệ thống phát hiện hành vi bất thường (ưu tiên đánh nhau)
+
+> File này là **bản giao việc đầy đủ** cho Claude Code. Đọc hết trước khi làm.
+> Người dùng là sinh viên, giao tiếp bằng **tiếng Việt** → luôn trả lời bằng tiếng Việt.
+> Làm **từng bước nhỏ**, xong bước nào thì chạy thử / kiểm tra rồi mới sang bước sau.
+> Mọi quyết định kỹ thuật dưới đây **đã được chốt** – không tự ý đổi hướng (dataset, mô hình, FPS, kiến trúc) nếu chưa hỏi người dùng.
+
+---
+
+## 1. Tổng quan dự án
+
+**Mục tiêu:** hệ thống giám sát qua camera, cảnh báo cho người giám sát khi có hành vi bất thường. **Ưu tiên số 1 là phát hiện đánh nhau.**
+
+**Ràng buộc:**
+- Máy người dùng **không có GPU** (Intel Core i5-13500H, Windows 11). Chạy realtime **bằng CPU**.
+- **Train trên Kaggle** (GPU T4), tải file mô hình (`.onnx`) về chạy trên máy.
+- Nguồn video: **webcam laptop** hoặc **camera điện thoại** (app IP Webcam: `http://<ip>:8080/video`) hoặc file video (để kiểm thử).
+- Giao diện: **cửa sổ OpenCV chạy local** (KHÔNG dùng Gradio / web server – đã thử Gradio bị giật).
+- Dùng **ít nhất 2 dataset** để train mô hình đánh nhau.
+- Lưu sự kiện bằng **SQLite**.
+
+**8 loại bất thường cần phát hiện:**
+
+| # | Loại | Cách phát hiện | Ưu tiên |
+|---|---|---|---|
+| 1 | ĐÁNH NHAU | Mô hình **Pair-TCN + MIL** (train có giám sát yếu) | 100 |
+| 2 | TÉ NGÃ RỒI NẰM BẤT ĐỘNG | Kết hợp luật té ngã + nằm bất động | 90 |
+| 3 | HOẢNG LOẠN (đám đông bỏ chạy) | Luật tracking | 85 |
+| 4 | TÉ NGÃ | Luật khung xương | 80 |
+| 5 | GIƠ TAY ĐẦU HÀNG | Luật tư thế | 70 |
+| 6 | VẪY TAY CẦU CỨU | Luật tư thế | 60 |
+| 7 | NẰM BẤT ĐỘNG | Luật tư thế | 60 |
+| 8 | ÔM ĐẦU / GỤC ĐẦU | Luật tư thế | 40 |
+
+**Để ở mục "hướng phát triển" (KHÔNG làm bây giờ):** đồ vật bị bỏ lại, cháy/khói, vũ khí, phá hoại/trộm đồ, backend Spring Boot xem lịch sử cảnh báo.
+
+---
+
+## 2. Môi trường & thông số đã chốt
+
+- Thư mục dự án: `D:\project\httm` (đường dẫn **không dấu** – bắt buộc, vì OpenCV trên Windows lỗi đọc/ghi file khi đường dẫn có dấu tiếng Việt).
+- Python **3.12.10** trong `.venv` (máy có cả 3.14 nhưng KHÔNG dùng). Kích hoạt: `.venv\Scripts\Activate.ps1`.
+- Thư viện chính: `ultralytics 8.4.x`, `torch 2.15 (CPU)`, `opencv-python 5.0`, `openvino 2026.4`, `onnxruntime 1.31`, `pillow`, `pyyaml`, `numpy 2.x`, `lap`.
+- Cập nhật requirements bằng: `pip freeze | Out-File -Encoding utf8 requirements.txt` (KHÔNG dùng `>` vì PowerShell ghi UTF-16).
+- Terminal là **PowerShell**.
+
+**Kết quả đo FPS (YOLOv8n-pose + ByteTrack, imgsz 416, CPU):**
+
+| Backend | ms/frame | FPS |
+|---|---|---|
+| PyTorch `.pt` | 44.4 | 22.5 |
+| **OpenVINO** | **21.5** | **46.5** |
+
+**Thông số chốt:**
+- Mô hình pose realtime: `realtime/models/yolov8n-pose_openvino_model/`, `imgsz=416`, `conf=0.3`, tracker `bytetrack.yaml`.
+- YOLO + tracking chạy **mọi frame camera** (~30 FPS) để ID ổn định.
+- **`sample_fps = 15`**: chuỗi khung xương đưa vào mô hình/luật được **lấy mẫu theo thời gian về đúng 15 FPS** (dùng `shared/sampling.py::FpsSampler`). Train trên Kaggle cũng phải lấy mẫu đúng như vậy. Lý do: RLVS có clip chỉ ~22 FPS, mô hình học vận tốc/gia tốc nên FPS train và chạy thật phải khớp.
+
+---
+
+## 3. Cấu trúc thư mục (mục tiêu)
+
+```
+httm/
+├── CLAUDE.md                 # file này
+├── requirements.txt
+├── .gitignore
+├── run.bat                   # (tuần 7) bấm đúp để chạy
+├── README.md                 # (tuần 7)
+├── kaggle/
+│   ├── 01_extract_pose.ipynb # ĐÃ CÓ trên Kaggle (đang chạy) – tải bản về lưu ở đây
+│   ├── 02_train.ipynb        # cần viết
+│   └── 03_export.ipynb       # có thể gộp vào 02
+├── data_selfrecorded/        # video nhóm tự quay (gitignore)
+└── realtime/
+    ├── main.py               # ĐÃ CÓ
+    ├── config.yaml           # ĐÃ CÓ – cần mở rộng thêm ngưỡng các detector
+    ├── core/
+    │   ├── camera.py         # ĐÃ CÓ
+    │   ├── pose.py           # ĐÃ CÓ
+    │   ├── ui.py             # ĐÃ CÓ
+    │   ├── events.py         # cần viết: EventManager
+    │   ├── db.py             # cần viết: SQLite
+    │   └── recorder.py       # cần viết: lưu clip quanh sự kiện
+    ├── detectors/
+    │   ├── base.py           # cần viết: lớp Detector
+    │   ├── fight.py          # cần viết: Pair-TCN (tạm dùng luật giả khi chưa có .onnx)
+    │   ├── fall.py           # cần viết
+    │   ├── pose_rules.py     # cần viết
+    │   └── panic.py          # cần viết
+    ├── shared/
+    │   ├── sampling.py       # ĐÃ CÓ – DÙNG CHUNG với Kaggle
+    │   └── features.py       # cần viết – DÙNG CHUNG với Kaggle
+    ├── models/               # yolov8n-pose.pt, *_openvino_model/, pair_tcn.onnx, fight_config.json
+    ├── tools/
+    │   ├── benchmark.py      # ĐÃ CÓ
+    │   ├── review.py         # cần viết
+    │   ├── evaluate.py       # cần viết
+    │   └── build_kaggle_notebook.py  # cần viết (xem mục 7)
+    └── events/               # ảnh, clip, events.db sinh ra khi chạy (gitignore)
+```
+
+Lệnh chạy (từ thư mục `httm`): `python realtime/main.py [nguồn]` – nguồn có thể là `0`, URL điện thoại hoặc đường dẫn video.
+
+---
+
+## 4. Trạng thái hiện tại
+
+**Đã xong:**
+- Môi trường `.venv` Python 3.12, cài đủ thư viện, đo FPS (bảng trên), export OpenVINO.
+- Repo git đã khởi tạo, có `.gitignore` (bỏ `.venv/`, `__pycache__/`, `realtime/models/*.pt`, `realtime/models/*_openvino_model/`, `realtime/models/*.onnx`, `realtime/events/`, `data_selfrecorded/`).
+- Bộ khung tuần 1 (`main.py`, `config.yaml`, `core/camera.py`, `core/pose.py`, `core/ui.py`, `shared/sampling.py`). **Cần chạy thử xác nhận** (xem Giai đoạn A, bước A0).
+- Kaggle: notebook `01_extract_pose` (tài khoản `hocaoaa`) đang chạy version #1 trích xuất khung xương cho 4000 clip (xem mục 6).
+
+**Chưa làm:** mọi thứ còn lại ở mục 8.
+
+---
+
+## 5. Giao diện dữ liệu chung (BẮT BUỘC tuân theo)
+
+### 5.1 `tracks` (đầu ra `core/pose.py::PoseTracker`)
+```python
+tracks = {track_id: {"box": np.ndarray(4,) xyxy pixel, "kpts": np.ndarray(17, 3) [x_pixel, y_pixel, conf]}}
+```
+Keypoint theo chuẩn COCO-17: 0 mũi, 1-2 mắt (L,R), 3-4 tai (L,R), 5-6 vai, 7-8 khuỷu, 9-10 cổ tay, 11-12 hông, 13-14 gối, 15-16 cổ chân. Chỉ số chẵn/lẻ: lẻ = trái, chẵn = phải (trừ 0).
+
+### 5.2 Sự kiện (event)
+```python
+{"type": "ĐÁNH NHAU", "severity": 100, "ids": [3, 7], "confidence": 0.87 | None}
+```
+`main.py` sẽ thêm `time` (HH:MM:SS) và `t` (time.time()) trước khi hiển thị/lưu.
+
+### 5.3 Lớp `Detector` (`detectors/base.py`)
+```python
+class Detector:
+    name = "base"
+    def update(self, frame, tracks, t):
+        """Gọi ở MỖI frame được lấy mẫu (15 FPS – khi sampler.tick(t) == True).
+        frame: ảnh BGR; tracks: như 5.1; t: thời điểm (giây).
+        Trả về list sự kiện (5.2) vừa XÁC NHẬN (không trả lặp mỗi frame)."""
+        return []
+    def highlight_ids(self):
+        """(tuỳ chọn) ID cần tô đỏ trên màn hình, vd cặp đang đánh nhau."""
+        return set()
+```
+Mọi detector giả định dữ liệu vào ở **15 FPS** (đọc từ `config.yaml: sample_fps`). Detector tự xoá dữ liệu của ID không còn xuất hiện.
+
+### 5.4 `EventManager` (`core/events.py`)
+- Giữ danh sách detector, gọi `update` của từng cái trong mỗi tick lấy mẫu.
+- **Ưu tiên**: sắp xếp sự kiện theo bảng ưu tiên ở mục 1. Nếu một ID đã nằm trong sự kiện ưu tiên cao hơn **trong cùng tick hoặc đang có cảnh báo ĐÁNH NHAU còn hiệu lực (≤ 3 s)**, bỏ các sự kiện ưu tiên thấp hơn của ID đó (vd người đang đánh nhau giơ tay đỡ đòn → không báo GIƠ TAY).
+- **Nâng cấp**: nếu có NẰM BẤT ĐỘNG cho ID đã có TÉ NGÃ trong 30 s gần nhất → đổi type thành `TÉ NGÃ RỒI NẰM BẤT ĐỘNG`.
+- **Cooldown**: cùng (type, tập ids) không báo lại trong 10 s.
+- Trả về danh sách sự kiện cuối cùng + tập ID cần tô đỏ.
+
+```python
+PRIORITY = {"ĐÁNH NHAU": 100, "TÉ NGÃ RỒI NẰM BẤT ĐỘNG": 90, "HOẢNG LOẠN": 85,
+            "TÉ NGÃ": 80, "GIƠ TAY ĐẦU HÀNG": 70, "VẪY TAY CẦU CỨU": 60,
+            "NẰM BẤT ĐỘNG": 60, "ÔM ĐẦU / GỤC ĐẦU": 40}
+```
+
+### 5.5 SQLite (`core/db.py`) – dùng đúng schema này
+```python
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    started_at TEXT NOT NULL, ended_at TEXT, source TEXT, config_json TEXT);
+CREATE TABLE IF NOT EXISTS events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id INTEGER NOT NULL REFERENCES sessions(id),
+    ts TEXT NOT NULL, type TEXT NOT NULL, severity INTEGER,
+    track_ids TEXT,              -- JSON, vd "[3, 7]"
+    confidence REAL, snapshot_path TEXT, clip_path TEXT,
+    reviewed INTEGER DEFAULT 0,
+    is_true INTEGER,             -- 1 đúng, 0 báo nhầm, NULL chưa duyệt
+    note TEXT);
+CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts);
+CREATE INDEX IF NOT EXISTS idx_events_type ON events(type);
+"""
+```
+Lớp `EventDB(path="realtime/events/events.db")`: `PRAGMA journal_mode=WAL`, `check_same_thread=False` + `threading.Lock`. Hàm: `start_session(source, config)`, `end_session(id)`, `add_event(session_id, type, severity, ids, confidence, snapshot, clip) -> id`, `set_clip(event_id, path)`, `review(event_id, is_true, note)`, `unreviewed()`, `stats()` (theo type: total, reviewed, correct, precision).
+
+---
+
+## 6. Dữ liệu trên Kaggle (đầu ra notebook `01_extract_pose`)
+
+**Dataset dùng để train đánh nhau (2 bộ):**
+- RWF-2000: `/kaggle/input/datasets/daniazehra/rwf-2000/RWF-2000/{train,val}/{Fight,NonFight}/*.avi` – 800+800 train, 200+200 val, 30 FPS, ~150 frame/clip. **Giữ chia train/val chính thức.**
+- RLVS: `/kaggle/input/datasets/mohamedmustafa/real-life-violence-situations-dataset/Real Life Violence Dataset/{Violence,NonViolence}/*.mp4` – 1000+1000, FPS 22–30. Thư mục `real life violence situations/...` là **bản sao trùng → KHÔNG dùng**. Chia 80/20 stratified, `random_state=42`.
+- Tổng 4000 clip.
+
+**Cách trích xuất:** YOLOv8n-pose, `imgsz=640` (offline, để bắt người nhỏ ở camera giám sát), `conf=0.25`, ByteTrack, `persist=False` mỗi video, **mọi frame ở FPS gốc**, tối đa 20 s/clip.
+
+**Định dạng file** `/kaggle/working/poses/{dataset}__{split}__{tên}__{label}.npz`:
+- `data`: float32 (N, 57), mỗi dòng 1 người ở 1 frame: `[frame_idx, track_id, x1, y1, x2, y2, 17 × (x, y, conf)]`. **Toạ độ chuẩn hoá 0..1 theo W và H riêng biệt** (box là `xyxyn`). `track_id = -1` nếu tracker chưa gán.
+- `fps`, `n_frames`, `width`, `height`.
+- ⚠️ Khi tính đặc trưng phải **nhân lại `x*width`, `y*height`** để về pixel (tránh méo tỉ lệ khung hình), rồi mới chuẩn hoá theo chiều cao người như realtime.
+
+**`/kaggle/working/meta.csv`** cột: `file, dataset, label, split, src, n_frames, max_persons, n_long_tracks, fps, has_pair`.
+
+**Quan sát từ chạy thử 20 clip:** ~1.6 s/clip; khung xương khớp người; khi 2 người quấn nhau YOLO hay chỉ bắt 1 người; `has_pair` (≥2 track giữ ID ≥30% clip) khá thấp (RWF Fight ~0.6) do ID hay nhảy → cần **nối tracklet** và **xét cặp theo cửa sổ** (mục 7.1), KHÔNG lọc bỏ clip theo `has_pair`.
+
+---
+
+## 7. Đặc tả mô hình đánh nhau (Pair-TCN + MIL)
+
+### 7.1 `shared/features.py` (dùng chung Kaggle + realtime – một nguồn duy nhất)
+Viết hàm thuần numpy, không phụ thuộc ultralytics/cv2.
+
+1. **Chuyển dữ liệu** về dạng theo track: `{tid: list[(t_giây, box_pixel(4), kpts_pixel(17,3))]}`.
+2. **Lấy mẫu 15 FPS** bằng logic `FpsSampler` (theo thời gian `t = frame_idx / fps`).
+3. **Nối tracklet** (chỉ cần ở offline; realtime giữ ID bằng ByteTrack persist): track A kết thúc tại t, track B bắt đầu trong ≤ 0.5 s, khoảng cách tâm box < 0.5 × chiều cao box → gộp B vào A. Track `-1` bỏ.
+4. **Lấp frame thiếu** của một người trong cửa sổ: nội suy tuyến tính nếu khoảng trống ≤ 3 frame mẫu, ngược lại để 0 và conf 0.
+5. **Cửa sổ:** `WINDOW = 32` frame mẫu (~2.1 s), bước trượt `STRIDE = 8`.
+6. **Chọn cặp ứng viên trong cửa sổ:** cả 2 người có mặt ≥ 60% frame; tại ít nhất 1 frame khoảng cách tâm box ≤ 1.5 × chiều cao trung bình. Tối đa 6 cặp gần nhau nhất / cửa sổ.
+7. **Đặc trưng mỗi frame của cặp (A, B)** – chuẩn hoá: gốc toạ độ = trung điểm tâm hông của A và B (nếu thiếu hông dùng tâm box), thang đo = chiều cao box trung bình của 2 người. Keypoint conf < 0.3 → toạ độ 0, conf 0.
+   - (x, y) 17 khớp của A và B → 68
+   - conf 17 khớp của A và B → 34
+   - vận tốc (x, y) 17 khớp A và B (hiệu frame mẫu liên tiếp, đã chuẩn hoá) → 68
+   - khoảng cách mỗi cổ tay của A tới đầu B và tới tâm thân B, và ngược lại → 8
+   - khoảng cách tâm A–B và tốc độ thay đổi của nó → 2
+   - **Tổng FEAT_DIM = 180.** Hàm trả về mảng `(WINDOW, 180)` float32.
+8. Hàm public gợi ý:
+   - `tracks_from_npz(npz) -> dict` (offline)
+   - `build_pair_windows(tracks_by_id, window=32, stride=8) -> list[(idA, idB, start_t, feats(32,180))]`
+   - `pair_features(seqA, seqB) -> np.ndarray(32,180)` (dùng cả realtime)
+
+### 7.2 Mô hình (PyTorch, train trên Kaggle)
+- **Instance** = (cặp, cửa sổ) → `(32, 180)`. **Bag** = 1 clip (nhãn Fight/NonFight).
+- **TCN:** Conv1d 180→128, 4 block residual (kernel 3, dilation 1/2/4/8, BatchNorm, ReLU, dropout 0.2), pool max + mean theo thời gian → Linear 256→64→1 (logit).
+- **MIL pooling:** điểm bag = trung bình top-k logit instance, `k = max(1, ceil(n/8))`. Loss BCEWithLogits trên bag.
+- Clip nhãn 1 không có instance nào → bỏ khi train (in số lượng). Clip nhãn 0 không có instance → dự đoán 0 khi đánh giá.
+- **Augment:** nhiễu Gauss σ=0.01 lên toạ độ; xoá ngẫu nhiên 10% khớp; 30% xác suất xoá toàn bộ thân dưới (khớp 11–16, mô phỏng webcam thấy nửa người); lật ngang (x→−x và hoán đổi khớp trái/phải); hoán đổi A/B; co giãn thời gian 0.8–1.2 bằng nội suy.
+- Chuẩn hoá đặc trưng bằng mean/std tính trên instance tập train.
+- AdamW lr 1e-3, weight decay 1e-4, cosine, ~40 epoch, batch 16 bag. Lưu checkpoint tốt nhất theo F1 val.
+- **Đánh giá (cho báo cáo):** Accuracy, F1, AUC mức clip trên val của từng dataset và gộp; thí nghiệm **train RWF → test RLVS**, **train RLVS → test RWF**, **train gộp**.
+- **Xuất:** `pair_tcn.onnx` (input `x`: `(batch, 32, 180)`, dynamic batch, output `logit` theo instance, opset 17) + `fight_config.json`:
+  ```json
+  {"fps": 15, "window": 32, "stride": 8, "feat_dim": 180, "mean": [...], "std": [...], "threshold": 0.6}
+  ```
+
+### 7.3 Đưa code chung lên Kaggle
+Viết `realtime/tools/build_kaggle_notebook.py` sinh ra `kaggle/02_train.ipynb`: ô đầu dùng `%%writefile sampling.py` và `%%writefile features.py` với **nội dung đọc trực tiếp từ `realtime/shared/`** để luôn đồng bộ; các ô sau là load dữ liệu (Add Input → Notebook Output của `01_extract_pose`), dựng instance, train, đánh giá, export. Người dùng sẽ upload file `.ipynb` này lên Kaggle (File → Import Notebook) và chạy trên GPU T4.
+
+### 7.4 Realtime (`detectors/fight.py`)
+- Mỗi track giữ bộ đệm 32 frame mẫu gần nhất (deque). Mỗi 4 tick lấy mẫu: dựng các cặp ứng viên bằng **cùng hàm** trong `shared/features.py`, gom thành 1 batch, chạy ONNX Runtime (`CPUExecutionProvider`), sigmoid.
+- Làm mượt mỗi cặp bằng EMA (α = 0.4). Báo **ĐÁNH NHAU** khi EMA > `threshold` liên tục ≥ 1 s. Trả `highlight_ids` = 2 ID của cặp → vẽ khung đỏ.
+- **Khi chưa có `pair_tcn.onnx`:** dùng luật giả (2 người khoảng cách tâm < 1 × chiều cao và tốc độ cổ tay trung bình > 2 chiều cao/giây trong 1 s) để chạy thử toàn hệ thống. Tự chuyển sang ONNX khi file tồn tại.
+
+---
+
+## 8. Danh sách việc cần làm (theo thứ tự)
+
+### Giai đoạn A – Hệ thống trên máy (làm ngay, không cần chờ Kaggle)
+- [ ] **A0.** Chạy `python realtime/main.py`, xác nhận: khung xương + ID ổn định, FPS ~25–30, tiếng Việt có dấu đúng, phím `s` lưu ảnh. Sửa lỗi nếu có.
+- [ ] **A1.** `detectors/base.py` + `core/events.py` (mục 5.3, 5.4). Mở rộng `config.yaml` thêm mục `detectors:` chứa bật/tắt và ngưỡng của từng detector.
+- [ ] **A2.** `core/db.py` (mục 5.5). `main.py`: mở session khi chạy, đóng khi thoát; mỗi sự kiện lưu ảnh chụp (tên file không dấu) + ghi DB + thêm vào bảng cảnh báo.
+- [ ] **A3.** `detectors/fall.py`, `detectors/pose_rules.py`, `detectors/panic.py` theo **code tham chiếu ở mục 9** (chuyển sang giao diện `Detector`). Thêm tham số vào `config.yaml`.
+- [ ] **A4.** `detectors/fight.py` bản luật giả (mục 7.4). Ghép tất cả vào `main.py` qua `EventManager`; người trong `highlight_ids` vẽ đỏ.
+- [ ] **A5.** `core/recorder.py`: giữ 5 s khung hình đã vẽ gần nhất (ring buffer); khi có sự kiện ghi clip `.mp4` (3 s trước + 2 s sau, codec `mp4v`) ở luồng nền, xong gọi `db.set_clip`.
+- [ ] **A6.** `tools/review.py`: duyệt sự kiện chưa review (phím y = đúng, n = báo nhầm, s = bỏ qua, q = thoát), in bảng `db.stats()`.
+- **Mốc A:** giơ tay, té, nằm im trước webcam đều được báo đúng, có ảnh + clip + bản ghi DB, không báo trùng lặp.
+
+### Giai đoạn B – Kaggle (khi `01_extract_pose` chạy xong)
+- [ ] **B1.** `shared/features.py` (mục 7.1) + test nhỏ bằng dữ liệu giả.
+- [ ] **B2.** `tools/build_kaggle_notebook.py` → `kaggle/02_train.ipynb` (mục 7.2, 7.3).
+- [ ] **B3.** Hướng dẫn người dùng chạy trên Kaggle, đọc kết quả, tải `pair_tcn.onnx` + `fight_config.json` về `realtime/models/`.
+- **Mốc B:** F1 val ≥ 0.8.
+
+### Giai đoạn C – Ghép mô hình thật
+- [ ] **C1.** `fight.py` dùng ONNX (mục 7.4). Kiểm tra cùng một clip cho ra cùng điểm giữa Kaggle và local (sai khác do imgsz 640 vs 416 là chấp nhận được).
+- **Mốc C (MVP):** giả vờ đánh nhau trước webcam → báo đúng cặp, khung đỏ.
+
+### Giai đoạn D – Hoàn thiện, đánh giá
+- [ ] **D1.** Hỗ trợ fine-tune bằng video tự quay (`data_selfrecorded/`): đánh nhau dàn dựng nhẹ + mẫu âm khó (ôm nhau, đập tay, vươn vai, vẫy chào, cúi xem điện thoại). Tạo script trích xuất khung xương chạy được trên Kaggle cho thư mục này.
+- [ ] **D2.** `tools/evaluate.py`: chạy pipeline không hiển thị trên thư mục video + file nhãn CSV, xuất precision/recall từng loại, FPS, độ trễ báo động. Dataset kiểm tra luật: **UR Fall / Le2i** (té ngã), **UMN** (hoảng loạn).
+- [ ] **D3.** `run.bat` (kích hoạt venv + chạy main), `README.md` hướng dẫn cài đặt/chạy.
+
+**Nếu thiếu thời gian, cắt theo thứ tự:** ÔM ĐẦU / GỤC ĐẦU → demo HOẢNG LOẠN chỉ bằng video UMN. **Luôn giữ:** đánh nhau, té ngã, giơ tay đầu hàng, database.
+
+---
+
+## 9. Code tham chiếu cho các luật (đã thiết kế – chuyển sang giao diện `Detector`)
+
+### 9.1 Té ngã
+```python
+import numpy as np
+from collections import deque
+
+L_SH, R_SH, L_HIP, R_HIP = 5, 6, 11, 12
+
+class FallDetector:
+    def __init__(self, fps=15, drop_speed=1.2, angle_deg=60, hold_sec=2.0):
+        self.fps, self.drop_speed = fps, drop_speed       # drop_speed: số "thân người" rơi trong 1s
+        self.angle, self.hold = angle_deg, int(hold_sec * fps)
+        self.hist, self.dropped, self.down_count = {}, {}, {}
+
+    def update(self, tid, kpts, box):
+        if min(kpts[[L_SH, R_SH, L_HIP, R_HIP], 2]) < 0.4:
+            return False
+        sh  = kpts[[L_SH, R_SH], :2].mean(0)
+        hip = kpts[[L_HIP, R_HIP], :2].mean(0)
+        dx, dy = hip - sh
+        angle = np.degrees(np.arctan2(abs(dx), abs(dy) + 1e-6))   # 0° = thân thẳng đứng
+        w, h = box[2] - box[0], box[3] - box[1]
+        q = self.hist.setdefault(tid, deque(maxlen=self.fps))
+        q.append((hip[1], max(w, h)))
+        if len(q) == q.maxlen:
+            body = np.median([b for _, b in q])
+            speed = (q[-1][0] - q[0][0]) / body                   # >0: hông đi xuống
+            if speed > self.drop_speed:
+                self.dropped[tid] = True
+        lying = angle > self.angle or w > 1.2 * h
+        if self.dropped.get(tid) and lying:
+            self.down_count[tid] = self.down_count.get(tid, 0) + 1
+        elif not lying:
+            self.dropped[tid], self.down_count[tid] = False, 0
+        return self.down_count.get(tid, 0) >= self.hold
+```
+(Cần thêm: chỉ báo 1 lần mỗi lần té, xoá dữ liệu ID đã rời khung hình.)
+
+### 9.2 Luật tư thế: GIƠ TAY ĐẦU HÀNG, VẪY TAY CẦU CỨU, NẰM BẤT ĐỘNG, ÔM ĐẦU / GỤC ĐẦU
+Điều kiện: giơ tay = cả 2 cổ tay cao hơn đầu ≥ 2.5 s; vẫy tay = cổ tay cao hơn vai, đổi hướng ≥ 5 lần, biên độ ≥ 0.4 thân trong 3 s; nằm bất động = thân ngang (góc > 60° hoặc w > 1.2h) và khớp gần như không di chuyển (< 0.08 thân/giây) ≥ 10 s; ôm đầu/gục = 2 cổ tay cách đầu < 0.5 thân hoặc đầu thấp hơn vai ≥ 10 s. Mọi khoảng cách chuẩn hoá theo chiều dài thân (vai→hông; nếu không thấy hông dùng 1.2 × độ rộng vai). Cooldown 15 s mỗi (ID, luật).
+
+```python
+import numpy as np
+from collections import deque
+
+NOSE, L_EAR, R_EAR = 0, 3, 4
+L_SH, R_SH, L_WR, R_WR, L_HIP, R_HIP = 5, 6, 9, 10, 11, 12
+HEAD_KPTS = [0, 1, 2, 3, 4]
+CONF = 0.4
+
+def ok(k, *idx):
+    return all(k[i, 2] >= CONF for i in idx)
+
+class PoseRules:
+    def __init__(self, fps=15, hands_up_sec=2.5, wave_sec=3.0, wave_turns=5,
+                 still_sec=10.0, distress_sec=10.0, cooldown_sec=15.0):
+        self.fps = fps
+        self.need = {"GIƠ TAY ĐẦU HÀNG": int(hands_up_sec * fps),
+                     "NẰM BẤT ĐỘNG":     int(still_sec * fps),
+                     "ÔM ĐẦU / GỤC ĐẦU": int(distress_sec * fps)}
+        self.wave_len, self.wave_turns = int(wave_sec * fps), wave_turns
+        self.cooldown = int(cooldown_sec * fps)
+        self.hist, self.count, self.cool = {}, {}, {}
+
+    def _scale(self, k):
+        if not ok(k, L_SH, R_SH):
+            return None
+        sh = k[[L_SH, R_SH], :2].mean(0)
+        if ok(k, L_HIP, R_HIP):
+            torso = np.linalg.norm(k[[L_HIP, R_HIP], :2].mean(0) - sh)
+        else:
+            torso = 1.2 * np.linalg.norm(k[L_SH, :2] - k[R_SH, :2])
+        return (sh, torso) if torso > 1 else None
+
+    def _head(self, k):
+        vis = [i for i in HEAD_KPTS if k[i, 2] >= CONF]
+        return k[vis, :2].mean(0) if vis else None
+
+    def _hands_up(self, k, sh, torso):
+        if not ok(k, L_WR, R_WR):
+            return False
+        head = self._head(k)
+        top = head[1] if head is not None else sh[1] - 0.5 * torso
+        return k[L_WR, 1] < top - 0.1 * torso and k[R_WR, 1] < top - 0.1 * torso
+
+    def _waving(self, q, torso):
+        if len(q) < self.wave_len:
+            return False
+        arr = np.array(list(q)[-self.wave_len:])
+        for wr, s in ((L_WR, L_SH), (R_WR, R_SH)):
+            good = (arr[:, wr, 2] >= CONF) & (arr[:, s, 2] >= CONF)
+            if good.mean() < 0.8:
+                continue
+            above = (arr[good, wr, 1] < arr[good, s, 1]).mean() > 0.8
+            x = arr[good, wr, 0]
+            if not above or (x.max() - x.min()) < 0.4 * torso:
+                continue
+            v = np.diff(x)
+            v = v[np.abs(v) > 0.02 * torso]
+            turns = np.sum(np.sign(v[1:]) != np.sign(v[:-1]))
+            if turns >= self.wave_turns:
+                return True
+        return False
+
+    def _lying_still(self, k, q, sh, torso, box):
+        if not ok(k, L_HIP, R_HIP) or len(q) <= self.fps:
+            return False
+        dx, dy = k[[L_HIP, R_HIP], :2].mean(0) - sh
+        angle = np.degrees(np.arctan2(abs(dx), abs(dy) + 1e-6))
+        w, h = box[2] - box[0], box[3] - box[1]
+        if not (angle > 60 or w > 1.2 * h):
+            return False
+        a, b = q[-self.fps - 1], q[-1]
+        m = (a[:, 2] >= CONF) & (b[:, 2] >= CONF)
+        if m.sum() < 5:
+            return False
+        move = np.linalg.norm(b[m, :2] - a[m, :2], axis=1).mean() / torso
+        return move < 0.08
+
+    def _distress(self, k, sh, torso):
+        head = self._head(k)
+        if head is None:
+            return False
+        holding = ok(k, L_WR, R_WR) and max(
+            np.linalg.norm(k[L_WR, :2] - head),
+            np.linalg.norm(k[R_WR, :2] - head)) < 0.5 * torso
+        slumped = head[1] > sh[1] + 0.1 * torso
+        return holding or slumped
+
+    def _fire(self, key, cond):
+        if self.cool.get(key, 0) > 0:
+            self.cool[key] -= 1
+            return False
+        if cond:
+            self.cool[key] = self.cooldown
+            return True
+        return False
+
+    def update(self, tid, kpts, box):
+        q = self.hist.setdefault(tid, deque(maxlen=max(self.wave_len, self.fps) + 1))
+        q.append(kpts.copy())
+        s = self._scale(kpts)
+        if s is None:
+            return []
+        sh, torso = s
+        up = self._hands_up(kpts, sh, torso)
+        conds = {
+            "GIƠ TAY ĐẦU HÀNG": up,
+            "NẰM BẤT ĐỘNG":     self._lying_still(kpts, q, sh, torso, box),
+            "ÔM ĐẦU / GỤC ĐẦU": (not up) and self._distress(kpts, sh, torso),
+        }
+        events = []
+        for rule, c in conds.items():
+            key = (tid, rule)
+            self.count[key] = self.count.get(key, 0) + 1 if c else 0
+            if self._fire(key, self.count[key] >= self.need[rule]):
+                events.append(rule)
+        if self._fire((tid, "VẪY TAY CẦU CỨU"), self._waving(q, torso)):
+            events.append("VẪY TAY CẦU CỨU")
+        return events
+
+    def prune(self, active_ids):
+        active = set(active_ids)
+        for tid in list(self.hist):
+            if tid not in active:
+                del self.hist[tid]
+        self.count = {k: v for k, v in self.count.items() if k[0] in active}
+        self.cool  = {k: v for k, v in self.cool.items()  if k[0] in active}
+```
+Lưu ý: "gục đầu" dễ nhầm với cúi xem điện thoại → để `distress_sec` cấu hình được, có tuỳ chọn tắt nhánh `slumped`.
+
+### 9.3 Hoảng loạn (đám đông bỏ chạy)
+Điều kiện (cùng lúc, kéo dài ≥ 1 s): ≥ `min_people` người (mặc định 4, demo trong phòng 3); ≥ 3 người **và** ≥ 50% đang chạy (tốc độ > 1.5 chiều cao người/giây); tốc độ trung bình cả cảnh > 2 × mức nền (mức nền học dần khi cảnh bình thường, cần ~10–20 s khởi động). Phân loại kiểu: tỏa ra nhiều hướng / chạy cùng một hướng / chạy hỗn loạn. Cooldown 10 s. Phải gọi mọi tick, kể cả khi không có ai.
+
+```python
+import numpy as np
+from collections import deque
+
+class PanicDetector:
+    def __init__(self, fps=15, run_speed=1.5, min_people=4, min_running=3,
+                 run_ratio=0.5, surge_ratio=2.0, hold_sec=1.0, cooldown_sec=10):
+        self.fps = fps
+        self.run_speed = run_speed
+        self.min_people, self.min_running = min_people, min_running
+        self.run_ratio, self.surge_ratio = run_ratio, surge_ratio
+        self.hold, self.cooldown = int(hold_sec * fps), int(cooldown_sec * fps)
+        self.tracks = {}
+        self.baseline = None
+        self.on_count, self.cool = 0, 0
+
+    def update(self, ids, boxes, running_ids=()):
+        seen = set()
+        for tid, (x1, y1, x2, y2) in zip(ids, boxes):
+            q = self.tracks.setdefault(tid, deque(maxlen=self.fps))
+            foot, h = ((x1 + x2) / 2, y2), (y2 - y1)
+            if q and np.hypot(foot[0] - q[-1][0], foot[1] - q[-1][1]) > 1.5 * h:
+                q.clear()
+            q.append((foot[0], foot[1], h))
+            seen.add(tid)
+        for tid in list(self.tracks):
+            if tid not in seen:
+                del self.tracks[tid]
+
+        speeds, vels, starts = {}, {}, {}
+        for tid, q in self.tracks.items():
+            if len(q) < q.maxlen:
+                continue
+            arr = np.array(q)
+            dt = (len(arr) - 1) / self.fps
+            body = np.median(arr[:, 2])
+            d = arr[-1, :2] - arr[0, :2]
+            speeds[tid] = np.linalg.norm(d) / body / dt
+            vels[tid], starts[tid] = d, arr[0, :2]
+
+        if self.cool > 0:
+            self.cool -= 1
+        n = len(speeds)
+        if n == 0:
+            self.on_count = 0
+            return None
+
+        mean_speed = float(np.mean(list(speeds.values())))
+        running = [t for t, s in speeds.items() if s > self.run_speed or t in running_ids]
+        if self.baseline is None:
+            self.baseline = mean_speed
+        surge = mean_speed > self.surge_ratio * max(self.baseline, 0.2)
+        panic_now = (n >= self.min_people and len(running) >= self.min_running
+                     and len(running) / n >= self.run_ratio and surge)
+        if not panic_now:
+            self.baseline = 0.99 * self.baseline + 0.01 * mean_speed
+        self.on_count = self.on_count + 1 if panic_now else 0
+        if self.on_count < self.hold or self.cool > 0:
+            return None
+        self.cool = self.cooldown
+
+        center = np.mean([starts[t] for t in running], axis=0)
+        outward = []
+        for t in running:
+            r, v = starts[t] - center, vels[t]
+            if np.linalg.norm(r) > 1e-6 and np.linalg.norm(v) > 1e-6:
+                outward.append(np.dot(r, v) / (np.linalg.norm(r) * np.linalg.norm(v)))
+        dirs = np.array([vels[t] / (np.linalg.norm(vels[t]) + 1e-6) for t in running])
+        if outward and np.mean(outward) > 0.5:
+            kind = "tỏa ra nhiều hướng"
+        elif np.linalg.norm(dirs.mean(0)) > 0.7:
+            kind = "chạy cùng một hướng"
+        else:
+            kind = "chạy hỗn loạn"
+        return dict(n_people=n, n_running=len(running), kind=kind, ids=running)
+```
+
+---
+
+## 10. Quy ước & lưu ý
+
+- Đường dẫn file ghi ra (ảnh, clip) dùng **tên không dấu** (hàm `slug` bỏ dấu tiếng Việt). Chữ hiển thị trên giao diện thì có dấu, vẽ bằng Pillow (`core/ui.py`) vì `cv2.putText` không hỗ trợ dấu.
+- Tên cửa sổ OpenCV để không dấu.
+- Tham số/ngưỡng đặt trong `realtime/config.yaml`, không hard-code.
+- Không dùng `uvicorn --reload` / web server (đã chốt chạy cửa sổ local).
+- Không đẩy file nặng lên git (đã có `.gitignore`). Commit sau mỗi bước hoàn thành, message tiếng Việt ngắn gọn.
+- Notebook Kaggle: người dùng tự chạy trên Kaggle; Claude Code chỉ chuẩn bị file `.ipynb` và hướng dẫn từng bước bấm gì.
+- Khi cần thông tin không có trong file này (đường dẫn, kết quả chạy, lỗi), **hỏi người dùng** thay vì đoán.

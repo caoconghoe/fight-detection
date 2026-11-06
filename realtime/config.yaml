@@ -1,0 +1,24 @@
+# Cấu hình hệ thống giám sát. Đường dẫn tương đối tính từ thư mục realtime/.
+source: 0                       # 0 = webcam, "http://<ip>:8080/video" = điện thoại, hoặc đường dẫn video
+
+camera:
+  width: null                   # null = để mặc định của camera
+  height: null
+  file_realtime: true           # file video: phát đúng tốc độ thật (false = chạy nhanh nhất có thể)
+
+pose:
+  model: models/yolov8n-pose_openvino_model
+  imgsz: 416
+  conf: 0.3
+  tracker: bytetrack.yaml
+
+sample_fps: 15                  # chuỗi khung xương đưa vào detector được lấy mẫu về 15 FPS
+
+ui:
+  font_size: 18
+  kpt_conf: 0.3                 # chỉ vẽ khớp có conf >= ngưỡng này
+  panel_width: 360              # panel bên phải (pixel, ở video cao 540; tự phóng theo độ phân giải)
+  new_sec: 10                   # cảnh báo trong vòng N giây được tô đỏ là "mới"
+  window: "HTTM - Giam sat (q: thoat, s: chup anh)"
+
+snapshot_dir: events/snapshots
