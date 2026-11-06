@@ -29,7 +29,7 @@ def build_detectors(cfg):
                 raise
             print(f"[canh bao] chua co detector '{name}' ({mod_name.replace('.', '/')}.py) -> bo qua")
             continue
-        dets.append(getattr(mod, cls_name)(fps=cfg["sample_fps"], **params))
+        dets.append(getattr(mod, cls_name)(fps=cfg["sample_fps"], full_body=cfg.get("full_body"), **params))
     return dets
 
 

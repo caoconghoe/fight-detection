@@ -33,6 +33,11 @@ events:                         # EventManager (core/events.py)
   fight_hold_sec: 3             # ID vừa đánh nhau ≤ N giây -> bỏ các cảnh báo thấp hơn của ID đó
   fall_upgrade_sec: 30          # NẰM BẤT ĐỘNG trong N giây sau TÉ NGÃ -> "TÉ NGÃ RỒI NẰM BẤT ĐỘNG"
 
+full_body:                      # "thấy đủ thân" – điều kiện để xét TÉ NGÃ và NẰM BẤT ĐỘNG
+  shoulder_hip_conf: 0.5        # 2 vai + 2 hông conf ≥ N
+  knee_conf: 0.4                # ít nhất 1 gối conf ≥ N
+  edge_margin: 0.02             # khung cách mép dưới ảnh > N × chiều cao ảnh; chạm mép bất kỳ -> bỏ điều kiện w > 1.2h
+
 # Mọi thời lượng tính bằng giây; khoảng cách/tốc độ chuẩn hoá theo kích thước người.
 detectors:
   fight:                        # ĐÁNH NHAU (detectors/fight.py)
@@ -51,11 +56,13 @@ detectors:
     drop_speed: 1.2             # hông rơi > N "thân người" trong 1 s
     angle_deg: 60               # thân lệch khỏi phương đứng > N độ = đang nằm
     hold_sec: 2.0               # nằm sau khi rơi ≥ N giây mới báo
+    scale_sec: 2.0              # thang đo = trung vị chiều dài thân trong N giây TRƯỚC cú rơi
 
   pose_rules:                   # GIƠ TAY / VẪY TAY / NẰM BẤT ĐỘNG / ÔM ĐẦU (detectors/pose_rules.py)
     enabled: true
     hands_up: true
     hands_up_sec: 2.5
+    hands_up_head_dist: 0.3     # cổ tay phải cách đầu > N thân (loại tay đan sau gáy / đặt trên đầu)
     wave: true
     wave_sec: 3.0
     wave_turns: 5               # số lần đổi hướng tối thiểu

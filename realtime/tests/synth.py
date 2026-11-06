@@ -45,10 +45,15 @@ def person(cx, hip_y, H=300, a_deg=0.0, arms="down", rw=None, re=None, noise=1.0
     return {"box": box, "kpts": kp}
 
 
-def run(detector, frames_fn, secs, fps=FPS):
-    """Chạy detector trên chuỗi tracks frames_fn(t) trong secs giây; trả về [(t, type, ids)]."""
+def run(detector, frames_fn, secs, fps=FPS, frame_shape=None):
+    """Chạy detector (hoặc EventManager) trên chuỗi tracks frames_fn(t) trong secs giây; trả về [(t, type, ids)].
+    frame_shape (H, W): ảnh giả có kích thước này (để luật kiểm tra mép ảnh); None = không có ảnh."""
+    frame = None if frame_shape is None else np.zeros((*frame_shape, 3), np.uint8)
     out = []
     for i in range(int(secs * fps)):
         t = i / fps
-        out += [(round(t, 2), e["type"], e["ids"]) for e in detector.update(None, frames_fn(t), t)]
+        evs = detector.update(frame, frames_fn(t), t)
+        if isinstance(evs, tuple):                         # EventManager trả (events, highlight)
+            evs = evs[0]
+        out += [(round(t, 2), e["type"], e["ids"]) for e in evs]
     return out

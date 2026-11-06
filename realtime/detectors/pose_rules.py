@@ -55,7 +55,7 @@ def count_turns(x, min_swing):
 class PoseRulesDetector(Detector):
     name = "pose_rules"
 
-    def __init__(self, fps=15, hands_up=True, hands_up_sec=2.5,
+    def __init__(self, fps=15, hands_up=True, hands_up_sec=2.5, hands_up_head_dist=0.3,
                  wave=True, wave_sec=3.0, wave_turns=5, wave_amplitude=0.4, wave_min_swing=0.15,
                  wave_head_dist=0.5, wave_near_head_ratio=0.6,
                  lying_still=True, still_sec=10.0, still_speed=0.08,
@@ -67,17 +67,20 @@ class PoseRulesDetector(Detector):
         self.wave_len, self.wave_turns, self.wave_amp = int(wave_sec * fps), wave_turns, wave_amplitude
         self.wave_swing, self.wave_head_dist, self.wave_near = wave_min_swing, wave_head_dist, wave_near_head_ratio
         self.still_speed, self.slumped_on = still_speed, distress_slumped
+        self.hands_head_dist = hands_up_head_dist
         self.cooldown = int(cooldown_sec * fps)
         self.hist, self.count, self.cool, self.dbg = {}, {}, {}, {}
+        self.not_full = {}                                # tid -> số tick liên tiếp không thấy đủ thân
 
     def _scale(self, k):
+        """Chiều dài thân = max(vai→hông, 1.2 × độ rộng vai): cúi người về phía camera làm đoạn vai→hông
+        co ngắn (và hông thường bị YOLO đoán khi ngồi gần) nhưng độ rộng vai gần như không đổi."""
         if not ok(k, L_SH, R_SH):
             return None
         sh = k[[L_SH, R_SH], :2].mean(0)
+        torso = 1.2 * np.linalg.norm(k[L_SH, :2] - k[R_SH, :2])
         if ok(k, L_HIP, R_HIP):
-            torso = np.linalg.norm(k[[L_HIP, R_HIP], :2].mean(0) - sh)
-        else:
-            torso = 1.2 * np.linalg.norm(k[L_SH, :2] - k[R_SH, :2])
+            torso = max(torso, np.linalg.norm(k[[L_HIP, R_HIP], :2].mean(0) - sh))
         return (sh, torso) if torso > 1 else None
 
     def _head(self, k):
@@ -85,11 +88,23 @@ class PoseRulesDetector(Detector):
         return k[vis, :2].mean(0) if vis else None
 
     def _hands_up(self, k, sh, torso):
-        if not ok(k, L_WR, R_WR):
-            return False
+        """Giơ tay đầu hàng: với CẢ 2 tay – khuỷu cao hơn vai, cổ tay cao hơn khuỷu, cổ tay cao hơn
+        đỉnh đầu, cổ tay cách đầu > hands_up_head_dist thân (loại tay đan sau gáy / đặt trên đầu).
+        Đỉnh đầu = điểm CAO HƠN giữa keypoint mặt và ước lượng từ vai (vai − 0.5 thân), vì khi cúi
+        đầu các keypoint mặt tụt xuống. Trả về (đúng?, cờ từng điều kiện [trái, phải] cho debug)."""
+        flags = {"khuyu>vai": [0, 0], "ct>khuyu": [0, 0], "tren dinh": [0, 0], "xa dau": [0, 0]}
+        if not ok(k, L_WR, R_WR, L_EL, R_EL):
+            return False, flags
         head = self._head(k)
-        top = head[1] if head is not None else sh[1] - 0.5 * torso
-        return k[L_WR, 1] < top - 0.1 * torso and k[R_WR, 1] < top - 0.1 * torso
+        est = np.array([sh[0], sh[1] - 0.5 * torso])        # đỉnh đầu ước lượng từ vai
+        top = min(head[1], est[1]) if head is not None else est[1]
+        refs = [est] + ([head] if head is not None else [])
+        for i, (wr, el, s) in enumerate(((L_WR, L_EL, L_SH), (R_WR, R_EL, R_SH))):
+            flags["khuyu>vai"][i] = int(k[el, 1] < k[s, 1])
+            flags["ct>khuyu"][i] = int(k[wr, 1] < k[el, 1])
+            flags["tren dinh"][i] = int(k[wr, 1] < top - 0.1 * torso)
+            flags["xa dau"][i] = int(min(np.linalg.norm(k[wr, :2] - r) for r in refs) > self.hands_head_dist * torso)
+        return all(all(v) for v in flags.values()), flags
 
     def _waving(self, q, torso):
         """Vẫy tay (giữ điều kiện mục 9.2) = trong wave_sec giây: cổ tay cao hơn vai ở > 80% frame,
@@ -121,7 +136,7 @@ class PoseRulesDetector(Detector):
                 best = info
         return best["ok"], best
 
-    def _lying_still(self, k, q, sh, torso, box):
+    def _lying_still(self, k, q, sh, torso, box, touch):
         angle = torso_angle(k, sh)
         if angle is None or len(q) <= self.fps:
             return False, None
@@ -129,7 +144,7 @@ class PoseRulesDetector(Detector):
         m = (a[:, 2] >= CONF) & (b[:, 2] >= CONF)
         move = np.linalg.norm(b[m, :2] - a[m, :2], axis=1).mean() / torso if m.sum() >= 5 else None
         w, h = box[2] - box[0], box[3] - box[1]
-        lying = angle > 60 or w > 1.2 * h
+        lying = angle > 60 or (not touch and w > 1.2 * h)   # khung chạm mép: tỉ lệ w/h không tin được
         return lying and move is not None and move < self.still_speed, move
 
     def _distress(self, k, sh, torso):
@@ -153,7 +168,7 @@ class PoseRulesDetector(Detector):
             return True
         return False
 
-    def _check(self, tid, kpts, box):
+    def _check(self, tid, kpts, box, shape):
         q = self.hist.setdefault(tid, deque(maxlen=max(self.wave_len, self.fps) + 1))
         q.append(kpts.copy())
         s = self._scale(kpts)
@@ -161,13 +176,21 @@ class PoseRulesDetector(Detector):
             self.dbg[tid] = {"torso": None}
             return []
         sh, torso = s
-        up = self._hands_up(kpts, sh, torso)
-        still, move = self._lying_still(kpts, q, sh, torso, box)
+        up, up_flags = self._hands_up(kpts, sh, torso)
+        full, touch, _ = self.body_check(kpts, box, shape)
+        if full:                                          # NẰM BẤT ĐỘNG chỉ xét khi thấy đủ thân
+            self.not_full[tid] = 0
+            still, move = self._lying_still(kpts, q, sh, torso, box, touch)
+        else:                                             # không đủ thân: giữ nguyên bộ đếm (keypoint chập chờn),
+            self.not_full[tid] = self.not_full.get(tid, 0) + 1   # quá 1 s mới xoá
+            if self.not_full[tid] > self.fps:
+                self.count[(tid, STILL)] = 0
+            still, move = None, None
         conds = {HANDS_UP: up, STILL: still,
                  DISTRESS: (not up) and self._distress(kpts, sh, torso)}
         rules = []
         for rule, c in conds.items():
-            if not self.enabled[rule]:
+            if not self.enabled[rule] or c is None:
                 continue
             key = (tid, rule)
             self.count[key] = self.count.get(key, 0) + 1 if c else 0
@@ -176,7 +199,7 @@ class PoseRulesDetector(Detector):
         wave, winfo = self._waving(q, torso) if self.enabled[WAVE] else (False, {})
         if self.enabled[WAVE] and self._fire((tid, WAVE), wave):
             rules.append(WAVE)
-        self.dbg[tid] = {"torso": torso, "move": move, "wave": winfo}
+        self.dbg[tid] = {"torso": torso, "move": move, "wave": winfo, "up": up_flags, "full": full}
         return rules
 
     def update(self, frame, tracks, t):
@@ -185,10 +208,12 @@ class PoseRulesDetector(Detector):
             for tid in gone:
                 self.hist.pop(tid, None)
                 self.dbg.pop(tid, None)
+                self.not_full.pop(tid, None)
             self.count = {k: v for k, v in self.count.items() if k[0] not in gone}
             self.cool = {k: v for k, v in self.cool.items() if k[0] not in gone}
+        shape = None if frame is None else frame.shape
         return [self.event(rule, [tid]) for tid, tr in tracks.items()
-                for rule in self._check(tid, tr["kpts"], tr["box"])]
+                for rule in self._check(tid, tr["kpts"], tr["box"], shape)]
 
     def debug_info(self, tid):
         d = self.dbg.get(tid)
@@ -202,9 +227,14 @@ class PoseRulesDetector(Detector):
         for label, r in (("GIO TAY", HANDS_UP), ("OM DAU", DISTRESS)):
             if self.enabled[r]:
                 lines.append(f"{label} {c(r)}" + (f" (cho {cd(r):.0f}s)" if cd(r) > 0 else ""))
+                if r == HANDS_UP:                         # cờ điều kiện tay trái/phải: 1 = đạt
+                    lines.append("  " + " ".join(f"{n} {a}{b}" for n, (a, b) in d["up"].items()))
         if self.enabled[STILL]:
-            mv = "-" if d["move"] is None else f"{d['move']:.2f}"
-            lines.append(f"NAM IM {c(STILL)} v={mv}/{self.still_speed}")
+            if d["full"]:
+                mv = "-" if d["move"] is None else f"{d['move']:.2f}"
+                lines.append(f"NAM IM {c(STILL)} v={mv}/{self.still_speed}")
+            else:
+                lines.append(f"NAM IM {c(STILL)} (bo qua: khong du than)")
         w = d["wave"]
         if self.enabled[WAVE]:
             if "turns" in w:
