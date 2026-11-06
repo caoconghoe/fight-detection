@@ -1,0 +1,7 @@
+﻿file,nhan,loai_mong_doi,dung,canh_bao,bao_dau_tien_s,bao_dung_loai_s,ema_danh_nhau_max,p_danh_nhau_max,che_do_danh_nhau,thoi_luong_s,fps_goc,so_frame,fps_xu_ly,yolo_ms,detector_ms,so_nguoi_tb,so_nguoi_max
+fight_0Ow4cotKOuw_0.avi,fight,ĐÁNH NHAU,0,,-,-,0.629,0.988,onnx,5.00,30.0,150,9.5,27.8,6.70,3.3,7
+fight_0Ow4cotKOuw_1.avi,fight,ĐÁNH NHAU,1,"ĐÁNH NHAU @3.40s ID[21, 29]; ĐÁNH NHAU @4.20s ID[11, 21]",3.40,3.40,0.927,0.992,onnx,5.00,30.0,150,18.5,31.2,9.64,5.5,8
+fight_0Ow4cotKOuw_2.avi,fight,ĐÁNH NHAU,1,"ĐÁNH NHAU @2.07s ID[1, 2]",2.07,2.07,0.950,0.999,onnx,5.00,30.0,150,20.6,28.5,7.98,4.6,9
+nonfight_10uSOcwS_0.avi,nonfight,,1,,-,-,0.000,0.000,onnx,5.00,30.0,150,40.7,22.5,0.08,0.0,1
+nonfight_6doZoiaG9PM_3.avi,nonfight,,1,,-,-,0.017,0.029,onnx,5.00,30.0,150,20.0,30.0,11.58,4.0,4
+nonfight_8m3onRfr_0.avi,nonfight,,1,,-,-,0.000,0.000,onnx,5.00,30.0,150,30.7,28.3,3.66,1.4,3

@@ -47,6 +47,12 @@ class PoseTracker:
         self.imgsz, self.conf, self.tracker, self.device = imgsz, conf, tracker, device
         self.dedup_iou, self.dedup_contain = dedup_iou, dedup_contain
 
+    def reset(self):
+        """Xoá trạng thái ByteTrack (ID đánh lại từ 1) – dùng khi chuyển sang video khác mà không nạp lại YOLO."""
+        predictor = getattr(self.model, "predictor", None)
+        for tr in getattr(predictor, "trackers", None) or []:
+            tr.reset()
+
     def __call__(self, frame):
         """tracks = {track_id: {"box": (4,) xyxy pixel, "kpts": (17, 3) [x, y, conf]}}"""
         r = self.model.track(frame, imgsz=self.imgsz, conf=self.conf, tracker=self.tracker,
