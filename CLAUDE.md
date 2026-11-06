@@ -107,15 +107,33 @@ Lệnh chạy (từ thư mục `httm`): `python realtime/main.py [nguồn]` – 
 
 ---
 
-## 4. Trạng thái hiện tại
+## 4. Trạng thái hiện tại (cập nhật 2026-11-06)
 
-**Đã xong:**
-- Môi trường `.venv` Python 3.12, cài đủ thư viện, đo FPS (bảng trên), export OpenVINO.
-- Repo git đã khởi tạo, có `.gitignore` (bỏ `.venv/`, `__pycache__/`, `realtime/models/*.pt`, `realtime/models/*_openvino_model/`, `realtime/models/*.onnx` trừ `pair_tcn.onnx`, `realtime/events/`, `data_selfrecorded/`).
-- Bộ khung tuần 1 (`main.py`, `config.yaml`, `core/camera.py`, `core/pose.py`, `core/ui.py`, `shared/sampling.py`): code đầy đủ ở **mục 11**. Nếu trong thư mục chưa có thì tạo từ mục 11, rồi chạy thử (bước A0).
-- Kaggle: notebook `01_extract_pose` (tài khoản `hocaoaa`) đang chạy version #1 trích xuất khung xương cho 4000 clip (xem mục 6).
+**Đã xong (code trong repo là nguồn chính xác nhất; mục 11 chỉ là bộ khung tuần 1 ban đầu, nay đã mở rộng):**
+- Môi trường `.venv` Python 3.12, đo FPS, export OpenVINO. Repo GitHub `caoconghoe/fight-detection`.
+  `.gitignore` bỏ `.venv/`, `__pycache__/`, `realtime/models/*.pt`, `realtime/models/*_openvino_model/`,
+  `realtime/models/*.onnx` trừ `pair_tcn.onnx`, `realtime/events/`, `data_selfrecorded/`.
+- **Giai đoạn A (A0–A6):** bộ khung (webcam MSMF 30 FPS, panel cảnh báo, phím `s`/`d`), `EventManager`, SQLite,
+  4 detector (đánh nhau, té ngã, luật tư thế, hoảng loạn), recorder clip, `review.py`. Đã sửa theo thử thật:
+  vẫy tay (lọc tay gần đầu, ngưỡng đổi hướng 0.15 thân), giơ tay (khuỷu/cổ tay/đỉnh đầu ước lượng/cách đầu),
+  té ngã + nằm im chỉ xét khi thấy đủ thân (mục `full_body` trong config), thang đo thân chống co ngắn khi cúi,
+  tracker riêng `realtime/trackers/bytetrack_httm.yaml` (track_buffer 60), loại khung trùng.
+- **Giai đoạn B (B1–B3):** `shared/features.py` (tiêu chí ghép cặp trong `PARAMS`, mặc định = mức 7),
+  `tools/build_kaggle_notebook.py` → `kaggle/02_train.ipynb`, đã train đầy đủ trên Kaggle (4000 clip).
+  **Mốc B đạt:** gộp → gộp val **F1 0.850, AUC 0.883** (RWF val F1 0.818, RLVS val 0.880); mức tiêu chí 7
+  (có mặt chung 30%, nối tracklet 1 s); 90% clip Fight val có ≥ 1 instance. Kết quả: `kaggle/results/`.
+- **Giai đoạn C (C1):** `detectors/fight.py` dùng `pair_tcn.onnx` + `fight_config.json` (pair_params, mean/std,
+  threshold 0.6), ONNX Runtime 2 luồng (~4 ms/lượt). Kiểm tra 6 clip RWF val (`data_selfrecorded/test/`):
+  **đúng 5/6** (3/3 NonFight không báo, 2/3 Fight báo ở 2.1 s và 3.4 s; clip sót do ByteTrack đổi ID liên tục và
+  mô hình chỉ cho điểm cao ở giây cuối). Webcam 640×480 vẫn ~30 FPS khi bật mô hình.
+- **D2:** `tools/evaluate.py` (nhãn theo tiền tố tên file, CSV vào `kaggle/results/`). **D3:** `run.bat`, `README.md`.
+- Unit test: `realtime/tests/test_*.py` (features, fight, pose_rules, body_rules, recorder, evaluate).
 
-**Chưa làm:** mọi thứ còn lại ở mục 8.
+**Còn lại:**
+- Thử webcam với **2 người thật** (Mốc C): giả vờ đánh nhau → báo đúng cặp, khung đỏ; mẫu âm khó (ôm, đập tay, bắt tay).
+- Thử **té ngã toàn thân** (camera thấy cả người) và ÔM ĐẦU ở khoảng cách xa (hiện chỉ báo khi ngồi gần camera).
+- **D1:** fine-tune bằng video tự quay + script trích khung xương trên Kaggle cho `data_selfrecorded/`.
+- Đánh giá luật trên UR Fall / Le2i (té ngã), UMN (hoảng loạn) bằng `evaluate.py` (đổi tên file theo tiền tố).
 
 ---
 
@@ -257,29 +275,31 @@ Viết `realtime/tools/build_kaggle_notebook.py` sinh ra `kaggle/02_train.ipynb`
 ## 8. Danh sách việc cần làm (theo thứ tự)
 
 ### Giai đoạn A – Hệ thống trên máy (làm ngay, không cần chờ Kaggle)
-- [ ] **A0.** Nếu các file bộ khung tuần 1 (`realtime/main.py`, `realtime/config.yaml`, `realtime/core/camera.py`, `realtime/core/pose.py`, `realtime/core/ui.py`, `realtime/shared/sampling.py`, các `__init__.py`) **chưa có**, tạo chúng đúng nguyên văn theo **mục 11**. Sau đó chạy `python realtime/main.py`, xác nhận: khung xương + ID ổn định, FPS ~25–30, tiếng Việt có dấu đúng, phím `s` lưu ảnh. Sửa lỗi nếu có.
-- [ ] **A1.** `detectors/base.py` + `core/events.py` (mục 5.3, 5.4). Mở rộng `config.yaml` thêm mục `detectors:` chứa bật/tắt và ngưỡng của từng detector.
-- [ ] **A2.** `core/db.py` (mục 5.5). `main.py`: mở session khi chạy, đóng khi thoát; mỗi sự kiện lưu ảnh chụp (tên file không dấu) + ghi DB + thêm vào bảng cảnh báo.
-- [ ] **A3.** `detectors/fall.py`, `detectors/pose_rules.py`, `detectors/panic.py` theo **code tham chiếu ở mục 9** (chuyển sang giao diện `Detector`). Thêm tham số vào `config.yaml`.
-- [ ] **A4.** `detectors/fight.py` bản luật giả (mục 7.4). Ghép tất cả vào `main.py` qua `EventManager`; người trong `highlight_ids` vẽ đỏ.
-- [ ] **A5.** `core/recorder.py`: giữ 5 s khung hình đã vẽ gần nhất (ring buffer); khi có sự kiện ghi clip `.mp4` (3 s trước + 2 s sau, codec `mp4v`) ở luồng nền, xong gọi `db.set_clip`.
-- [ ] **A6.** `tools/review.py`: duyệt sự kiện chưa review (phím y = đúng, n = báo nhầm, s = bỏ qua, q = thoát), in bảng `db.stats()`.
+- [x] **A0.** Nếu các file bộ khung tuần 1 (`realtime/main.py`, `realtime/config.yaml`, `realtime/core/camera.py`, `realtime/core/pose.py`, `realtime/core/ui.py`, `realtime/shared/sampling.py`, các `__init__.py`) **chưa có**, tạo chúng đúng nguyên văn theo **mục 11**. Sau đó chạy `python realtime/main.py`, xác nhận: khung xương + ID ổn định, FPS ~25–30, tiếng Việt có dấu đúng, phím `s` lưu ảnh. Sửa lỗi nếu có.
+- [x] **A1.** `detectors/base.py` + `core/events.py` (mục 5.3, 5.4). Mở rộng `config.yaml` thêm mục `detectors:` chứa bật/tắt và ngưỡng của từng detector.
+- [x] **A2.** `core/db.py` (mục 5.5). `main.py`: mở session khi chạy, đóng khi thoát; mỗi sự kiện lưu ảnh chụp (tên file không dấu) + ghi DB + thêm vào bảng cảnh báo.
+- [x] **A3.** `detectors/fall.py`, `detectors/pose_rules.py`, `detectors/panic.py` theo **code tham chiếu ở mục 9** (chuyển sang giao diện `Detector`). Thêm tham số vào `config.yaml`.
+- [x] **A4.** `detectors/fight.py` bản luật giả (mục 7.4). Ghép tất cả vào `main.py` qua `EventManager`; người trong `highlight_ids` vẽ đỏ.
+- [x] **A5.** `core/recorder.py`: giữ 5 s khung hình đã vẽ gần nhất (ring buffer); khi có sự kiện ghi clip `.mp4` (3 s trước + 2 s sau, codec `mp4v`) ở luồng nền, xong gọi `db.set_clip`.
+- [x] **A6.** `tools/review.py`: duyệt sự kiện chưa review (phím y = đúng, n = báo nhầm, s = bỏ qua, q = thoát), in bảng `db.stats()`.
 - **Mốc A:** giơ tay, té, nằm im trước webcam đều được báo đúng, có ảnh + clip + bản ghi DB, không báo trùng lặp.
+  → Giơ tay, vẫy tay, ảnh + clip + DB đã đạt khi thử thật. **Còn thiếu: thử té ngã / nằm im toàn thân.**
 
 ### Giai đoạn B – Kaggle (khi `01_extract_pose` chạy xong)
-- [ ] **B1.** `shared/features.py` (mục 7.1) + test nhỏ bằng dữ liệu giả.
-- [ ] **B2.** `tools/build_kaggle_notebook.py` → `kaggle/02_train.ipynb` (mục 7.2, 7.3).
-- [ ] **B3.** Hướng dẫn người dùng chạy trên Kaggle, đọc kết quả, tải `pair_tcn.onnx` + `fight_config.json` về `realtime/models/`.
-- **Mốc B:** F1 val ≥ 0.8.
+- [x] **B1.** `shared/features.py` (mục 7.1) + test nhỏ bằng dữ liệu giả.
+- [x] **B2.** `tools/build_kaggle_notebook.py` → `kaggle/02_train.ipynb` (mục 7.2, 7.3).
+- [x] **B3.** Hướng dẫn người dùng chạy trên Kaggle, đọc kết quả, tải `pair_tcn.onnx` + `fight_config.json` về `realtime/models/`.
+- **Mốc B:** F1 val ≥ 0.8. → **ĐẠT:** gộp val F1 0.850, AUC 0.883 (mức tiêu chí 7).
 
 ### Giai đoạn C – Ghép mô hình thật
-- [ ] **C1.** `fight.py` dùng ONNX (mục 7.4). Kiểm tra cùng một clip cho ra cùng điểm giữa Kaggle và local (sai khác do imgsz 640 vs 416 là chấp nhận được).
+- [x] **C1.** `fight.py` dùng ONNX (mục 7.4). Kiểm tra cùng một clip cho ra cùng điểm giữa Kaggle và local (sai khác do imgsz 640 vs 416 là chấp nhận được). *(Phần dùng ONNX đã xong; phần so sánh điểm Kaggle–local cho cùng clip CHƯA làm.)*
 - **Mốc C (MVP):** giả vờ đánh nhau trước webcam → báo đúng cặp, khung đỏ.
+  → Trên video RWF val đúng 5/6 clip. **Còn thiếu: thử webcam với 2 người thật.**
 
 ### Giai đoạn D – Hoàn thiện, đánh giá
-- [ ] **D1.** Hỗ trợ fine-tune bằng video tự quay (`data_selfrecorded/`): đánh nhau dàn dựng nhẹ + mẫu âm khó (ôm nhau, đập tay, vươn vai, vẫy chào, cúi xem điện thoại). Tạo script trích xuất khung xương chạy được trên Kaggle cho thư mục này.
-- [ ] **D2.** `tools/evaluate.py`: chạy pipeline không hiển thị trên thư mục video + file nhãn CSV, xuất precision/recall từng loại, FPS, độ trễ báo động. Dataset kiểm tra luật: **UR Fall / Le2i** (té ngã), **UMN** (hoảng loạn).
-- [ ] **D3.** `run.bat` (kích hoạt venv + chạy main), `README.md` hướng dẫn cài đặt/chạy.
+- [ ] **D1.** *(chưa làm)* Hỗ trợ fine-tune bằng video tự quay (`data_selfrecorded/`): đánh nhau dàn dựng nhẹ + mẫu âm khó (ôm nhau, đập tay, vươn vai, vẫy chào, cúi xem điện thoại). Tạo script trích xuất khung xương chạy được trên Kaggle cho thư mục này.
+- [x] **D2.** `tools/evaluate.py`: chạy pipeline không hiển thị trên thư mục video + file nhãn CSV, xuất precision/recall từng loại, FPS, độ trễ báo động. Dataset kiểm tra luật: **UR Fall / Le2i** (té ngã), **UMN** (hoảng loạn). *(Đã có công cụ – nhãn lấy theo tiền tố tên file thay cho file CSV; CHƯA chạy trên UR Fall / Le2i / UMN.)*
+- [x] **D3.** `run.bat` (kích hoạt venv + chạy main), `README.md` hướng dẫn cài đặt/chạy.
 
 **Nếu thiếu thời gian, cắt theo thứ tự:** ÔM ĐẦU / GỤC ĐẦU → demo HOẢNG LOẠN chỉ bằng video UMN. **Luôn giữ:** đánh nhau, té ngã, giơ tay đầu hàng, database.
 
