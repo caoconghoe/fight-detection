@@ -11,6 +11,8 @@ pose:
   imgsz: 416
   conf: 0.3
   tracker: bytetrack.yaml
+  dedup_iou: 0.6                # 2 khung IoU > N -> coi là 1 người (giữ khung có tổng conf keypoint cao hơn)
+  dedup_contain: 0.8            # khung nằm trong khung kia > N diện tích (khung nhỏ) -> coi là trùng
 
 sample_fps: 15                  # chuỗi khung xương đưa vào detector được lấy mẫu về 15 FPS
 
@@ -22,6 +24,7 @@ ui:
   window: "HTTM - Giam sat (q: thoat, s: chup anh)"
 
 snapshot_dir: events/snapshots
+db_path: events/events.db
 
 events:                         # EventManager (core/events.py)
   cooldown_sec: 10              # cùng (loại, tập ID) không báo lại trong N giây
