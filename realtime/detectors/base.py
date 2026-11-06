@@ -20,6 +20,14 @@ class Detector:
         """(tuỳ chọn) ID cần tô đỏ trên màn hình, vd cặp đang đánh nhau."""
         return set()
 
+    def debug_info(self, tid):
+        """(chế độ debug, phím d) Các dòng chữ ASCII hiện trên khung người tid: bộ đếm hiện tại của luật."""
+        return []
+
+    def debug_scene(self):
+        """(chế độ debug) Các dòng chữ cho cả cảnh (vd hoảng loạn), hiện trên panel."""
+        return []
+
     def gone_ids(self, tracks, t):
         """Cập nhật thời điểm thấy từng ID; trả về các ID đã vắng > forget_sec (để detector xoá dữ liệu).
         Có thời gian chờ vì YOLO hay mất người (nhất là người đang nằm) trong vài frame."""

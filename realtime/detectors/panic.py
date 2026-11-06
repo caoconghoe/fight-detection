@@ -21,6 +21,7 @@ class PanicDetector(Detector):
         self.tracks = {}
         self.baseline = None
         self.on_count, self.cool = 0, 0
+        self.dbg = None                                     # số liệu cảnh hiện tại cho chế độ debug
 
     def _check(self, ids, boxes):
         seen = set()
@@ -50,7 +51,7 @@ class PanicDetector(Detector):
             self.cool -= 1
         n = len(speeds)
         if n == 0:
-            self.on_count = 0
+            self.on_count, self.dbg = 0, None
             return None
 
         mean_speed = float(np.mean(list(speeds.values())))
@@ -63,6 +64,7 @@ class PanicDetector(Detector):
         if not panic_now:
             self.baseline = 0.99 * self.baseline + 0.01 * mean_speed
         self.on_count = self.on_count + 1 if panic_now else 0
+        self.dbg = {"n": n, "running": len(running), "mean": mean_speed, "base": self.baseline}
         if self.on_count < self.hold or self.cool > 0:
             return None
         self.cool = self.cooldown
@@ -88,3 +90,11 @@ class PanicDetector(Detector):
         if r is None:
             return []
         return [self.event("HOẢNG LOẠN", r["ids"], detail=f"{r['kind']}, {r['n_running']}/{r['n_people']} người chạy")]
+
+    def debug_scene(self):
+        d = self.dbg
+        if not d:
+            return ["Hoảng loạn: chưa đủ dữ liệu (cần 1 s/người)"]
+        return [f"Hoảng loạn: {d['n']}/{self.min_people} người, {d['running']}/{self.min_running} chạy",
+                f"  tốc độ TB {d['mean']:.2f} / nền {d['base']:.2f} (cần ×{self.surge_ratio})",
+                f"  giữ {self.on_count}/{self.hold}"]

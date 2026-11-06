@@ -55,7 +55,20 @@ class UI:
             self.fonts[size] = (load_font(size), load_font(size, bold=True))
         return self.fonts[size]
 
-    def draw_tracks(self, img, tracks, highlight=()):
+    def draw_debug(self, img, box, lines, top):
+        """Chữ debug (ASCII, cv2 cho nhanh) ở góc trên trái khung người, ngay dưới nhãn ID."""
+        H, W = img.shape[:2]
+        x = min(max(int(box[0]), 0) + 2, W - 10)
+        y = top
+        for s in lines:
+            (tw, th), _ = cv2.getTextSize(s, cv2.FONT_HERSHEY_SIMPLEX, 0.42, 1)
+            if y + th + 6 > H:
+                break
+            cv2.rectangle(img, (x, y), (x + tw + 6, y + th + 6), (0, 0, 0), -1)
+            cv2.putText(img, s, (x + 3, y + th + 3), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 255, 255), 1, cv2.LINE_AA)
+            y += th + 6
+
+    def draw_tracks(self, img, tracks, highlight=(), debug=None):
         W = img.shape[1]
         for tid, tr in tracks.items():
             color = RED if tid in highlight else GREEN
@@ -79,6 +92,8 @@ class UI:
                 top = ly
             cv2.rectangle(img, (lx, top), (lx + tw + 6, top + th + 8), color, -1)
             cv2.putText(img, label, (lx + 3, top + th + 3), cv2.FONT_HERSHEY_SIMPLEX, 0.6, WHITE, 2)
+            if debug and debug.get(tid):
+                self.draw_debug(img, tr["box"], debug[tid], max(top + th + 8, max(y1, 0)) + 2)
 
     def _panel(self, H, status, alerts, now):
         s = max(1.0, H / 540)                                 # phóng theo độ phân giải video
@@ -121,10 +136,11 @@ class UI:
             y += 2 * lh + int(4 * s)
         return cv2.cvtColor(np.asarray(pil), cv2.COLOR_RGB2BGR)
 
-    def draw(self, frame, tracks, status=(), alerts=(), highlight=(), now=None):
+    def draw(self, frame, tracks, status=(), alerts=(), highlight=(), now=None, debug=None):
         """Vẽ tracks lên frame (tại chỗ) và trả về ảnh mới = [video | panel].
-        status: list chuỗi; alerts: list sự kiện (mục 5.2, có 'time', 't'), mới nhất trước."""
-        self.draw_tracks(frame, tracks, highlight)
+        status: list chuỗi; alerts: list sự kiện (mục 5.2, có 'time', 't'), mới nhất trước;
+        debug: {tid: [dòng chữ]} hiện trên khung từng người (chế độ debug) hoặc None."""
+        self.draw_tracks(frame, tracks, highlight, debug)
         now = time.time() if now is None else now
         alerts = list(alerts)
         key = (frame.shape[0], tuple(status),

@@ -90,6 +90,12 @@ class EventManager:
             highlight |= set(d.highlight_ids())
         return events, highlight
 
+    def debug(self, tracks):
+        """(chế độ debug) -> ({tid: [dòng chữ]}, [dòng chữ cho cả cảnh]) từ mọi detector."""
+        per_id = {tid: [line for d in self.detectors for line in d.debug_info(tid)] for tid in tracks}
+        scene = [line for d in self.detectors for line in d.debug_scene()]
+        return per_id, scene
+
     def _prune(self, t):
         self.last_fight = {i: v for i, v in self.last_fight.items() if t - v <= self.fight_hold}
         self.last_fall = {i: v for i, v in self.last_fall.items() if t - v <= self.fall_upgrade}

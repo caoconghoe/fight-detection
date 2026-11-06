@@ -2,7 +2,7 @@
 
 Chạy (từ thư mục httm):  python realtime/main.py [nguồn]
   nguồn: 0 (webcam) | http://<ip>:8080/video (điện thoại) | đường dẫn file video
-Phím: q / Esc = thoát, s = lưu ảnh chụp màn hình.
+Phím: q / Esc = thoát, s = lưu ảnh chụp màn hình, d = bật/tắt debug (bộ đếm từng luật).
 """
 import argparse
 import time
@@ -72,6 +72,7 @@ def main():
     t_first = t_now = start = None
     loop_t = time.perf_counter()
     status, status_t = [], 0.0
+    debug_on = False                              # phím d: hiện bộ đếm từng luật trên khung mỗi người
     db = EventDB(ROOT / cfg["db_path"])
     session = db.start_session(source, cfg)
     print(f"Session #{session} | DB: {db.path}")
@@ -115,7 +116,10 @@ def main():
                           f"YOLO: {pose_ms:.0f} ms  |  Lấy mẫu: {samp.value:.1f} FPS",
                           f"Số người: {len(tracks)}",
                           f"Nguồn: {cam.name}"]
-            view = ui.draw(frame, tracks, status, alerts, highlight)
+                if debug_on:
+                    status += ["DEBUG (phím d để tắt)"] + manager.debug({})[1]
+            dbg = manager.debug(tracks)[0] if debug_on else None
+            view = ui.draw(frame, tracks, status, alerts, highlight, debug=dbg)
             for e in events:                      # ảnh chụp đã có khung đỏ + cảnh báo trên panel
                 snap = save_snapshot(view, e)
                 e["id"] = db.add_event(session, e["type"], e["severity"], e["ids"], e["confidence"], snap)
@@ -129,6 +133,9 @@ def main():
                 if cv2.getWindowProperty(win, cv2.WND_PROP_VISIBLE) < 1:
                     reason = "dong cua so (nut X)"
                     break
+                if key == ord("d"):
+                    debug_on, status_t = not debug_on, 0.0
+                    print("Che do debug:", "BAT" if debug_on else "TAT")
                 if key == ord("s"):
                     snap_dir.mkdir(parents=True, exist_ok=True)
                     p = snap_dir / f"snap_{datetime.now():%Y%m%d_%H%M%S_%f}.jpg"

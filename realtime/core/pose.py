@@ -1,6 +1,10 @@
 """YOLOv8n-pose (OpenVINO) + ByteTrack -> dict tracks theo CLAUDE.md mục 5.1."""
+from pathlib import Path
+
 import numpy as np
 from ultralytics import YOLO
+
+ROOT = Path(__file__).resolve().parents[1]                     # thư mục realtime/
 
 
 def dedup(tracks, iou_thr=0.6, contain_thr=0.8):
@@ -31,9 +35,15 @@ def dedup(tracks, iou_thr=0.6, contain_thr=0.8):
 
 
 class PoseTracker:
-    def __init__(self, model, imgsz=416, conf=0.3, tracker="bytetrack.yaml", device="cpu",
+    def __init__(self, model, imgsz=416, conf=0.3, tracker="trackers/bytetrack_httm.yaml", device="cpu",
                  dedup_iou=0.6, dedup_contain=0.8):
         self.model = YOLO(str(model), task="pose")
+        p = Path(tracker) if Path(tracker).is_absolute() else ROOT / tracker
+        if p.is_file():                                        # file tracker riêng của dự án
+            tracker = str(p)
+        elif "/" in str(tracker) or "\\" in str(tracker):
+            raise FileNotFoundError(f"Khong thay file tracker: {p}")
+        # còn lại (vd "bytetrack.yaml"): tracker có sẵn của ultralytics
         self.imgsz, self.conf, self.tracker, self.device = imgsz, conf, tracker, device
         self.dedup_iou, self.dedup_contain = dedup_iou, dedup_contain
 

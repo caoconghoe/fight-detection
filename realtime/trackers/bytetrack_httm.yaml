@@ -1,0 +1,10 @@
+# ByteTrack cho HTTM – copy từ ultralytics/cfg/trackers/bytetrack.yaml (8.4.x), chỉ đổi track_buffer.
+# Docs: https://docs.ultralytics.com/modes/track
+
+tracker_type: bytetrack # (str) Tracker backend: bytetrack
+track_high_thresh: 0.25 # (float) First-stage match threshold; raise for cleaner tracks, lower to keep more
+track_low_thresh: 0.1 # (float) Second-stage threshold for low-score matches; balances recovery vs drift
+new_track_thresh: 0.25 # (float) Start a new track if no match ≥ this; higher reduces false tracks
+track_buffer: 60 # (int) Số frame giữ track bị mất trước khi xoá (60 frame ≈ 2 s ở 30 FPS; gốc là 30) -> giảm nhảy ID
+match_thresh: 0.8 # (float) Association similarity threshold (IoU/cost); tune with detector quality
+fuse_score: True # (bool) Fuse detection score with motion/IoU for matching; stabilizes weak detections

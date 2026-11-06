@@ -12,7 +12,7 @@ pose:
   model: models/yolov8n-pose_openvino_model
   imgsz: 416
   conf: 0.3
-  tracker: bytetrack.yaml
+  tracker: trackers/bytetrack_httm.yaml   # bản riêng: track_buffer 60 (gốc 30) để giảm nhảy ID
   dedup_iou: 0.6                # 2 khung IoU > N -> coi là 1 người (giữ khung có tổng conf keypoint cao hơn)
   dedup_contain: 0.8            # khung nằm trong khung kia > N diện tích (khung nhỏ) -> coi là trùng
 
@@ -23,7 +23,7 @@ ui:
   kpt_conf: 0.3                 # chỉ vẽ khớp có conf >= ngưỡng này
   panel_width: 360              # panel bên phải (pixel, ở video cao 540; tự phóng theo độ phân giải)
   new_sec: 10                   # cảnh báo trong vòng N giây được tô đỏ là "mới"
-  window: "HTTM - Giam sat (q: thoat, s: chup anh)"
+  window: "HTTM - Giam sat (q: thoat, s: chup anh, d: debug)"
 
 snapshot_dir: events/snapshots
 db_path: events/events.db
@@ -60,6 +60,9 @@ detectors:
     wave_sec: 3.0
     wave_turns: 5               # số lần đổi hướng tối thiểu
     wave_amplitude: 0.4         # biên độ ≥ N × chiều dài thân
+    wave_min_swing: 0.15        # mỗi lần đổi hướng phải dịch ≥ N thân (bỏ rung tay nhỏ khi vò đầu)
+    wave_head_dist: 0.5         # cổ tay cách đầu < N thân = "tay ở trên đầu"...
+    wave_near_head_ratio: 0.6   # ...ở ≥ N số frame trong cửa sổ -> không tính là vẫy (vò/gãi đầu)
     lying_still: true
     still_sec: 10.0
     still_speed: 0.08           # khớp di chuyển < N thân/giây = bất động

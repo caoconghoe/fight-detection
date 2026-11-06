@@ -18,9 +18,11 @@ class FallDetector(Detector):
         self.angle, self.hold = angle_deg, int(hold_sec * fps)
         self.grace = drop_grace_sec                       # sau cú rơi, chờ tối đa N giây để thân nằm ngang
         self.hist, self.dropped, self.down_count, self.fired = {}, {}, {}, set()
+        self.dbg = {}                                     # tid -> (tốc độ rơi, góc thân) cho chế độ debug
 
     def _check(self, tid, kpts, box, t):
         if min(kpts[[L_SH, R_SH, L_HIP, R_HIP], 2]) < CONF:
+            self.dbg[tid] = None
             return False
         sh = kpts[[L_SH, R_SH], :2].mean(0)
         hip = kpts[[L_HIP, R_HIP], :2].mean(0)
@@ -30,11 +32,13 @@ class FallDetector(Detector):
         w, h = box[2] - box[0], box[3] - box[1]
         q = self.hist.setdefault(tid, deque(maxlen=self.fps))
         q.append((t, hip[1], torso))
+        speed = None
         if len(q) == q.maxlen:
             body = np.median([b for _, _, b in q])
             speed = (q[-1][1] - q[0][1]) / max(body, 1.0) / max(q[-1][0] - q[0][0], 1e-6)  # >0: hông đi xuống
             if speed > self.drop_speed:
                 self.dropped[tid] = t
+        self.dbg[tid] = (speed, angle)
         lying = angle > self.angle or w > 1.2 * h
         drop_t = self.dropped.get(tid)
         if drop_t is not None and lying:
@@ -51,8 +55,18 @@ class FallDetector(Detector):
 
     def update(self, frame, tracks, t):
         for tid in self.gone_ids(tracks, t):
-            for d in (self.hist, self.dropped, self.down_count):
+            for d in (self.hist, self.dropped, self.down_count, self.dbg):
                 d.pop(tid, None)
             self.fired.discard(tid)
         return [self.event("TÉ NGÃ", [tid]) for tid, tr in tracks.items()
                 if self._check(tid, tr["kpts"], tr["box"], t)]
+
+    def debug_info(self, tid):
+        if tid not in self.dbg:
+            return []
+        if self.dbg[tid] is None:
+            return ["TE: khong thay du vai+hong"]
+        speed, angle = self.dbg[tid]
+        sp = "-" if speed is None else f"{speed:.2f}"
+        state = " ROI" if tid in self.dropped else ""
+        return [f"TE roi {sp}/{self.drop_speed} goc {angle:.0f}/{self.angle} nam {self.down_count.get(tid, 0)}/{self.hold}{state}"]
