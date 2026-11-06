@@ -55,6 +55,7 @@ detectors:
     model: models/pair_tcn.onnx          # chưa có file -> dùng luật giả
     model_config: models/fight_config.json
     infer_every: 4              # chạy mô hình mỗi N tick lấy mẫu
+    onnx_threads: 2             # số luồng ONNX Runtime (mặc định của ORT tranh CPU với YOLO: ~60 ms -> ~4 ms)
     ema_alpha: 0.4
     threshold: 0.6              # dùng khi fight_config.json không ghi threshold
     hold_sec: 1.0               # EMA > ngưỡng liên tục N giây mới báo

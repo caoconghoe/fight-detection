@@ -217,16 +217,26 @@ def pair_stats(A, B, n_frames=None):
 
 def candidate_pairs(seqs, n_frames=None, **kw):
     """Cặp ứng viên trong cửa sổ: có mặt chung ≥ min_copresence; có ≥ 1 frame khoảng cách tâm
-    ≤ near_ratio × chiều cao TB. Trả về ≤ max_pairs cặp (idA < idB) gần nhau nhất."""
+    ≤ near_ratio × chiều cao TB. Trả về ≤ max_pairs cặp (idA < idB) gần nhau nhất.
+    Tính mọi cặp cùng lúc bằng numpy (kết quả giống hệt pair_stats từng cặp – xem test)."""
     p = _p(kw)
     ids = sorted(seqs)
-    scored = []
-    for i, a in enumerate(ids):
-        for b in ids[i + 1:]:
-            co, d = pair_stats(seqs[a], seqs[b], n_frames)
-            if co >= p["min_copresence"] and d <= p["near_ratio"]:
-                scored.append((d, a, b))
-    return [(a, b) for _, a, b in sorted(scored)[:p["max_pairs"]]]
+    if len(ids) < 2:
+        return []
+    valid = np.stack([seqs[i]["valid"] for i in ids])                          # (n, W)
+    box = np.stack([seqs[i]["box"] for i in ids])                              # (n, W, 4)
+    center = (box[..., :2] + box[..., 2:]) / 2
+    height = box[..., 3] - box[..., 1]
+    W = valid.shape[1]
+    denom = W if n_frames is None else max(1, n_frames)
+    iu, ju = np.triu_indices(len(ids), 1)
+    both = valid[iu] & valid[ju]                                               # (cặp, W)
+    co = both.sum(1) / denom
+    h = np.maximum((height[iu] + height[ju]) / 2, 1.0)
+    ratio = np.where(both, np.linalg.norm(center[iu] - center[ju], axis=-1) / h, np.inf).min(1)
+    ok = (co >= p["min_copresence"]) & (ratio <= p["near_ratio"])
+    scored = sorted((float(ratio[k]), ids[iu[k]], ids[ju[k]]) for k in np.flatnonzero(ok))
+    return [(a, b) for _, a, b in scored[:p["max_pairs"]]]
 
 
 def window_starts(k0, k1, **kw):

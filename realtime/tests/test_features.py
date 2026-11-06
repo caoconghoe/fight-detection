@@ -237,6 +237,34 @@ def test_unknown_param_rejected():
     raise AssertionError("tham so la phai bao loi")
 
 
+def test_candidate_pairs_matches_reference():
+    """Bản numpy của candidate_pairs cho kết quả GIỐNG HỆT vòng lặp pair_stats từng cặp (dùng chung lúc train)."""
+    rng = np.random.default_rng(3)
+    def ref(seqs, n_frames, p):
+        ids, scored = sorted(seqs), []
+        for i, a in enumerate(ids):
+            for b in ids[i + 1:]:
+                co, d = F.pair_stats(seqs[a], seqs[b], n_frames)
+                if co >= p["min_copresence"] and d <= p["near_ratio"]:
+                    scored.append((d, a, b))
+        return [(a, b) for _, a, b in sorted(scored)[:p["max_pairs"]]]
+    n_pairs = 0
+    for trial in range(200):
+        n = int(rng.integers(2, 11))
+        seqs = {}
+        for tid in rng.choice(100, n, replace=False):
+            xy = rng.uniform(0, 1200, 2)
+            h = rng.uniform(80, 300)
+            box = np.tile(np.r_[xy, xy + [0.4 * h, h]], (32, 1)).astype(np.float32) + rng.normal(0, 5, (32, 4)).astype(np.float32)
+            valid = rng.random(32) < rng.uniform(0.1, 1)
+            seqs[int(tid)] = {"box": box, "valid": valid}
+        n_frames = None if trial % 2 else int(rng.integers(5, 33))
+        got = F.candidate_pairs(seqs, n_frames)
+        assert got == ref(seqs, n_frames, F.PARAMS), (trial, got)
+        n_pairs += len(got)
+    assert n_pairs > 100                                                # thực sự có nhiều cặp được chọn
+
+
 if __name__ == "__main__":
     tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_") and callable(f)]
     failed = 0

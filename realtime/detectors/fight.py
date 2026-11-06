@@ -29,9 +29,10 @@ class FightDetector(Detector):
 
     def __init__(self, fps=15, model="models/pair_tcn.onnx", model_config="models/fight_config.json",
                  infer_every=4, ema_alpha=0.4, threshold=0.6, hold_sec=1.0,
-                 fake_dist=1.0, fake_wrist_speed=2.0, **kw):
+                 fake_dist=1.0, fake_wrist_speed=2.0, onnx_threads=2, **kw):
         super().__init__(fps, **kw)
         self.infer_every, self.alpha, self.hold = infer_every, ema_alpha, hold_sec
+        self.onnx_threads = onnx_threads
         self.fake_dist, self.fake_speed = fake_dist, fake_wrist_speed
         self.threshold = threshold
         self.pair = dict(F.PARAMS)
@@ -42,7 +43,9 @@ class FightDetector(Detector):
             self.mode = "onnx"
         else:
             self.mode = "luat gia"
-            print(f"[fight] chua co {model.name} / {model_config.name} -> dung LUAT GIA (muc 7.4)")
+            print(f"[fight] chua co {model.name} / {model_config.name} -> DUNG LUAT GIA (muc 7.4) | nguong {threshold}"
+                  f" | kc < {fake_dist} x chieu cao, co tay > {fake_wrist_speed} chieu cao/s")
+            print(f"[fight] pair_params (F.PARAMS): {self.pair}")
         self.window = self.pair["window"]
         self.buf = {}                       # tid -> deque[(tick, box, kpts)]
         self.tick = 0
@@ -72,9 +75,14 @@ class FightDetector(Detector):
         self.std = np.asarray(cfg["std"], np.float32)
         self.threshold = float(cfg.get("threshold", self.threshold))
         import onnxruntime as ort
-        self.session = ort.InferenceSession(str(model), providers=["CPUExecutionProvider"])
+        so = ort.SessionOptions()                       # ít luồng + tắt spin: không tranh CPU với YOLO (OpenVINO)
+        so.intra_op_num_threads, so.inter_op_num_threads = self.onnx_threads, 1
+        so.add_session_config_entry("session.intra_op.allow_spinning", "0")
+        self.session = ort.InferenceSession(str(model), so, providers=["CPUExecutionProvider"])
         self.input_name = self.session.get_inputs()[0].name
-        print(f"[fight] ONNX {model.name} | nguong {self.threshold} | pair_params {cfg.get('pair_level', '')}")
+        same = "trung F.PARAMS" if self.pair == F.PARAMS else "KHAC F.PARAMS -> dung theo fight_config.json"
+        print(f"[fight] DUNG ONNX {model.name} | nguong {self.threshold} | val F1 {cfg.get('val', {}).get('f1', '?')}")
+        print(f"[fight] pair_params ({cfg.get('pair_level', '?')}, {same}): {self.pair}")
 
     # ------------------------------------------------------------ chấm điểm cặp
     def _onnx_scores(self, inst):
