@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+realtime/models/*.pt
+realtime/models/*_openvino_model/
+realtime/models/*.onnx
+realtime/events/
+data_selfrecorded/
