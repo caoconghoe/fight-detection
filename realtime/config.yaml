@@ -4,6 +4,8 @@ source: 0                       # 0 = webcam, "http://<ip>:8080/video" = điện
 camera:
   width: null                   # null = để mặc định của camera
   height: null
+  fps: 30                       # FPS yêu cầu webcam (đặt CAP_PROP_FPS)
+  backend: msmf                 # webcam: msmf (ổn định 30 FPS) | dshow (mặc định tụt 15 FPS khi thiếu sáng) | any
   file_realtime: true           # file video: phát đúng tốc độ thật (false = chạy nhanh nhất có thể)
 
 pose:

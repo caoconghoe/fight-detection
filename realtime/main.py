@@ -13,7 +13,7 @@ from pathlib import Path
 import cv2
 import yaml
 
-from core.camera import Camera
+from core.camera import Camera, FpsMeter
 from core.db import EventDB, slug
 from core.events import EventManager, build_detectors
 from core.pose import PoseTracker
@@ -49,7 +49,7 @@ def main():
     ui = UI(uc["font_size"], uc["kpt_conf"], uc["panel_width"], uc["new_sec"])
     win = uc["window"]
     snap_dir = ROOT / cfg["snapshot_dir"]
-    print(f"Nguon: {cam.name} | FPS nguon: {cam.fps:.1f}")
+    print(f"Nguon: {cam.name} | backend: {cam.backend} | {cam.width}x{cam.height} | FPS khai bao: {cam.fps:.1f}")
 
     def save_snapshot(view, e):
         """Lưu ảnh (tên không dấu), trả về đường dẫn tuyệt đối hoặc None nếu lỗi."""
@@ -67,7 +67,8 @@ def main():
     highlight = set()
     WARMUP = 10                                   # bỏ 10 frame đầu khỏi thống kê (OpenVINO khởi động)
     n = n_sampled = 0
-    fps = pose_ms = None
+    pose_ms = None
+    proc, samp = FpsMeter(), FpsMeter()           # số vòng lặp xử lý / số frame lấy mẫu mỗi giây
     t_first = t_now = start = None
     loop_t = time.perf_counter()
     status, status_t = [], 0.0
@@ -96,10 +97,10 @@ def main():
                     alerts.appendleft(e)
                     print(f"[{e['time']}] {e['type']} | ID {e['ids']} | conf {e['confidence']}")
 
-            now = time.perf_counter()
-            dt, loop_t = now - loop_t, now
-            if dt > 0:
-                fps = 1 / dt if fps is None else 0.9 * fps + 0.1 / dt
+            proc.tick()
+            if sampled:
+                samp.tick()
+            now = loop_t = time.perf_counter()
             n += 1
             if n == WARMUP:
                 start, t_first = now, t
@@ -109,7 +110,8 @@ def main():
 
             if now - status_t >= 0.5:             # cập nhật chữ trạng thái 2 lần/giây (panel được cache)
                 status_t = now
-                status = [f"FPS: {fps:.1f}  |  YOLO: {pose_ms:.0f} ms",
+                status = [f"Camera: {cam.meter.value:.1f} FPS  |  Xử lý: {proc.value:.1f} FPS",
+                          f"YOLO: {pose_ms:.0f} ms  |  Lấy mẫu: {samp.value:.1f} FPS",
                           f"Số người: {len(tracks)}",
                           f"Nguồn: {cam.name}"]
             view = ui.draw(frame, tracks, status, alerts, highlight)
@@ -143,7 +145,8 @@ def main():
 
     if t_now is not None:
         m = n - WARMUP
-        print(f"So frame: {n} | FPS trung binh: {m / (loop_t - start):.1f} | YOLO: {pose_ms:.1f} ms/frame")
+        print(f"So frame: {n} | Camera: {cam.meter.value:.1f} FPS | Xu ly trung binh: {m / (loop_t - start):.1f} FPS"
+              f" | YOLO: {pose_ms:.1f} ms/frame")
         print(f"Lay mau: {n_sampled} frame trong {t_now - t_first:.1f} s -> {n_sampled / (t_now - t_first):.1f} FPS")
 
 
