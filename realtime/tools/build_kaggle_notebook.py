@@ -37,7 +37,8 @@ CELLS = [
 
     Sinh tự động bởi `realtime/tools/build_kaggle_notebook.py` – **không sửa tay**, sửa ở repo rồi sinh lại.
 
-    **Chuẩn bị:** Add Input → *Notebook Output* của `01_extract_pose` · Settings → Accelerator **GPU T4**.
+    **Chuẩn bị:** Add Input → *Notebook Output* của `01_extract_pose` · Settings → Accelerator **GPU T4** ·
+    Settings → **Internet on** (để cài `onnx` nếu thiếu).
 
     **Chạy:** để `QUICK = True` chạy thử (200 clip, 3 epoch, vài phút) → không lỗi thì đổi `QUICK = False`,
     *Save Version → Save & Run All* để train đầy đủ (40 epoch, 3 thí nghiệm).
@@ -46,6 +47,16 @@ CELLS = [
 
     **Đầu ra (/kaggle/working):** `best_<thí nghiệm>.pt`, `pair_tcn.onnx`, `fight_config.json`,
     `results.csv`, `instance_coverage.csv`, `clip_stats.csv`.
+    """),
+    md("## 0. Thư viện xuất ONNX (cần bật Internet: Settings → Internet on)"),
+    code("""
+    import importlib.util, subprocess, sys
+    if importlib.util.find_spec("onnx") is None:
+        print("Chua co onnx -> pip install onnx onnxscript ...")
+        r = subprocess.run([sys.executable, "-m", "pip", "install", "-q", "onnx", "onnxscript"])
+        assert r.returncode == 0, "pip install loi -> bat Internet: Settings -> Internet on, roi chay lai o nay"
+    import onnx
+    print("onnx", onnx.__version__)
     """),
     md("## 1. Code dùng chung với realtime (`shared/sampling.py`, `shared/features.py`)"),
     writefile("sampling.py"),
@@ -102,47 +113,40 @@ CELLS = [
     print("POSES =", POSES, "|", len(glob.glob(os.path.join(POSES, "*.npz"))), "file .npz")
     """),
     code("""
+    # Định dạng của 01_extract_pose: dataset ∈ {rwf2000, rlvs}; label 0/1 (1 = Fight/Violence);
+    # split ∈ {train, val}; file = "{dataset}__{split}__{tên}__{label}.npz" trong poses/
+    COLS = ["file", "dataset", "label", "split", "src", "n_frames", "max_persons", "n_long_tracks", "fps", "has_pair"]
+    DS_NAME = {"rwf2000": "RWF", "rlvs": "RLVS"}
+
     meta = pd.read_csv(META)
     print("Cot:", meta.columns.tolist())
     display(meta.head(3))
 
-    def norm_ds(v):
-        s = str(v).lower()
-        if "rwf" in s:
-            return "RWF"
-        if "rlvs" in s or "real" in s or "violence" in s:
-            return "RLVS"
-        raise ValueError(f"Khong nhan ra dataset: {v!r}")
+    def check(bad, msg):
+        if bad.any():
+            display(meta.loc[bad, ["file", "dataset", "label", "split"]].head(10))
+            raise ValueError(f"{msg}: {int(bad.sum())} dong (xem bang tren)")
 
-    def norm_label(v):
-        s = str(v).strip().lower().replace("-", "").replace("_", "").replace(" ", "")
-        if s in ("1", "1.0", "fight", "violence", "true"):
-            return 1
-        if s in ("0", "0.0", "nonfight", "nonviolence", "false"):
-            return 0
-        raise ValueError(f"Khong nhan ra nhan: {v!r}")
+    missing_cols = [c for c in COLS if c not in meta.columns]
+    assert not missing_cols, f"meta.csv thieu cot {missing_cols}"
+    check(~meta["dataset"].isin(DS_NAME), f"dataset phai thuoc {sorted(DS_NAME)}")
+    check(~meta["split"].isin(["train", "val"]), "split phai la 'train' hoac 'val'")
+    label_num = pd.to_numeric(meta["label"], errors="coerce")
+    check(~label_num.isin([0, 1]), "label phai la so nguyen 0/1")
+    def name_ok(f, d, s, l):
+        p = os.path.basename(str(f))[:-4].split("__") if str(f).endswith(".npz") else []
+        return len(p) >= 4 and p[0] == d and p[1] == s and p[-1] == str(int(l))
+    expect_ok = np.array([name_ok(*r) for r in zip(meta["file"], meta["dataset"], meta["split"], label_num.fillna(-1))])
+    check(~expect_ok, "ten file khong khop dang {dataset}__{split}__{ten}__{label}.npz voi cac cot")
 
-    def norm_split(v):
-        s = str(v).strip().lower()
-        if s.startswith("train"):
-            return "train"
-        if s.startswith(("val", "test")):
-            return "val"
-        raise ValueError(f"Khong nhan ra split: {v!r}")
-
-    meta["ds"] = meta["dataset"].map(norm_ds)
-    meta["y"] = meta["label"].map(norm_label).astype(int)
-    meta["sp"] = meta["split"].map(norm_split)
+    meta["ds"] = meta["dataset"].map(DS_NAME)
+    meta["y"] = label_num.astype(int)
+    meta["sp"] = meta["split"]
     meta["path"] = meta["file"].map(lambda f: os.path.join(POSES, os.path.basename(str(f))))
     ok = meta["path"].map(os.path.exists)
     print(f"Thieu file npz: {(~ok).sum()} / {len(meta)}")
-    if (~ok).any():
-        display(meta.loc[~ok, ["file", "dataset", "label", "split"]].head())
-    meta = meta[ok].reset_index(drop=True)
-    print("Gia tri goc -> chuan hoa:")
-    display(meta.groupby(["dataset", "label", "split"]).size().rename("so clip").reset_index()
-            .assign(ds=lambda d: d.dataset.map(norm_ds), y=lambda d: d.label.map(norm_label),
-                    sp=lambda d: d.split.map(norm_split)))
+    check(~ok, "khong thay file .npz trong poses/")
+    display(meta.groupby(["dataset", "split", "label"]).size().rename("so clip").reset_index())
 
     if QUICK:
         per = max(1, QUICK_CLIPS // meta.groupby(["ds", "sp", "y"]).ngroups)
@@ -151,8 +155,27 @@ CELLS = [
         meta = meta.loc[sorted(take)].reset_index(drop=True)
         print(f"QUICK: lay {len(meta)} clip")
 
-    z = np.load(meta.path.iloc[0])
-    print("npz mau:", {k: (z[k].shape, z[k].dtype) for k in z.files})
+    NPZ_KEYS = ("data", "fps", "n_frames", "width", "height")
+
+    def load_npz(path):
+        \"\"\"Đọc npz và kiểm tra đúng định dạng (mục 6 CLAUDE.md); sai -> báo lỗi kèm tên file.\"\"\"
+        z = np.load(path)
+        miss = [k for k in NPZ_KEYS if k not in z.files]
+        if miss:
+            raise ValueError(f"{os.path.basename(path)}: thieu khoa {miss} (co {z.files})")
+        npz = {k: z[k] for k in NPZ_KEYS}
+        d = npz["data"]
+        if d.ndim != 2 or d.shape[1] != 57:
+            if d.size == 0:                              # clip không có ai -> (0, 57)
+                npz["data"] = d.reshape(0, 57).astype(np.float32)
+            else:
+                raise ValueError(f"{os.path.basename(path)}: data phai (N, 57), dang la {d.shape}")
+        if not (float(npz["fps"]) > 0 and int(npz["n_frames"]) > 0 and int(npz["width"]) > 0 and int(npz["height"]) > 0):
+            raise ValueError(f"{os.path.basename(path)}: fps/n_frames/width/height khong hop le")
+        return npz
+
+    z = load_npz(meta.path.iloc[0])
+    print("npz mau:", {k: (v.shape, v.dtype) for k, v in z.items()})
     """),
     md("""
     ## 4. Dựng instance (cặp × cửa sổ)
@@ -163,8 +186,7 @@ CELLS = [
     from multiprocessing import Pool
 
     def process(path):
-        z = np.load(path)
-        npz = {k: z[k] for k in ("data", "fps", "n_frames", "width", "height")}
+        npz = load_npz(path)
         inst, tracks_k = F.clip_instances(npz)
         K = len(sampling.sample_indices(list(F.clip_times(npz)), F.FPS))   # số frame mẫu của clip
         st = dict(dur=float(npz["n_frames"]) / float(npz["fps"]), K=K,

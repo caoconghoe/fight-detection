@@ -109,7 +109,7 @@ Lệnh chạy (từ thư mục `httm`): `python realtime/main.py [nguồn]` – 
 **Đã xong:**
 - Môi trường `.venv` Python 3.12, cài đủ thư viện, đo FPS (bảng trên), export OpenVINO.
 - Repo git đã khởi tạo, có `.gitignore` (bỏ `.venv/`, `__pycache__/`, `realtime/models/*.pt`, `realtime/models/*_openvino_model/`, `realtime/models/*.onnx`, `realtime/events/`, `data_selfrecorded/`).
-- Bộ khung tuần 1 (`main.py`, `config.yaml`, `core/camera.py`, `core/pose.py`, `core/ui.py`, `shared/sampling.py`). **Cần chạy thử xác nhận** (xem Giai đoạn A, bước A0).
+- Bộ khung tuần 1 (`main.py`, `config.yaml`, `core/camera.py`, `core/pose.py`, `core/ui.py`, `shared/sampling.py`): code đầy đủ ở **mục 11**. Nếu trong thư mục chưa có thì tạo từ mục 11, rồi chạy thử (bước A0).
 - Kaggle: notebook `01_extract_pose` (tài khoản `hocaoaa`) đang chạy version #1 trích xuất khung xương cho 4000 clip (xem mục 6).
 
 **Chưa làm:** mọi thứ còn lại ở mục 8.
@@ -196,6 +196,8 @@ Lớp `EventDB(path="realtime/events/events.db")`: `PRAGMA journal_mode=WAL`, `c
 - ⚠️ Khi tính đặc trưng phải **nhân lại `x*width`, `y*height`** để về pixel (tránh méo tỉ lệ khung hình), rồi mới chuẩn hoá theo chiều cao người như realtime.
 
 **`/kaggle/working/meta.csv`** cột: `file, dataset, label, split, src, n_frames, max_persons, n_long_tracks, fps, has_pair`.
+Giá trị: `dataset` ∈ {`rwf2000`, `rlvs`}; `label` số nguyên 0/1 (1 = Fight/Violence); `split` ∈ {`train`, `val`};
+`file` = `{dataset}__{split}__{tên}__{label}.npz` (tên file, nằm trong `poses/`). Notebook 01 đã chạy xong (Version #1, 4000 clip).
 
 **Quan sát từ chạy thử 20 clip:** ~1.6 s/clip; khung xương khớp người; khi 2 người quấn nhau YOLO hay chỉ bắt 1 người; `has_pair` (≥2 track giữ ID ≥30% clip) khá thấp (RWF Fight ~0.6) do ID hay nhảy → cần **nối tracklet** và **xét cặp theo cửa sổ** (mục 7.1), KHÔNG lọc bỏ clip theo `has_pair`.
 
@@ -251,7 +253,7 @@ Viết `realtime/tools/build_kaggle_notebook.py` sinh ra `kaggle/02_train.ipynb`
 ## 8. Danh sách việc cần làm (theo thứ tự)
 
 ### Giai đoạn A – Hệ thống trên máy (làm ngay, không cần chờ Kaggle)
-- [ ] **A0.** Chạy `python realtime/main.py`, xác nhận: khung xương + ID ổn định, FPS ~25–30, tiếng Việt có dấu đúng, phím `s` lưu ảnh. Sửa lỗi nếu có.
+- [ ] **A0.** Nếu các file bộ khung tuần 1 (`realtime/main.py`, `realtime/config.yaml`, `realtime/core/camera.py`, `realtime/core/pose.py`, `realtime/core/ui.py`, `realtime/shared/sampling.py`, các `__init__.py`) **chưa có**, tạo chúng đúng nguyên văn theo **mục 11**. Sau đó chạy `python realtime/main.py`, xác nhận: khung xương + ID ổn định, FPS ~25–30, tiếng Việt có dấu đúng, phím `s` lưu ảnh. Sửa lỗi nếu có.
 - [ ] **A1.** `detectors/base.py` + `core/events.py` (mục 5.3, 5.4). Mở rộng `config.yaml` thêm mục `detectors:` chứa bật/tắt và ngưỡng của từng detector.
 - [ ] **A2.** `core/db.py` (mục 5.5). `main.py`: mở session khi chạy, đóng khi thoát; mỗi sự kiện lưu ảnh chụp (tên file không dấu) + ghi DB + thêm vào bảng cảnh báo.
 - [ ] **A3.** `detectors/fall.py`, `detectors/pose_rules.py`, `detectors/panic.py` theo **code tham chiếu ở mục 9** (chuyển sang giao diện `Detector`). Thêm tham số vào `config.yaml`.
@@ -542,3 +544,292 @@ class PanicDetector:
 - Không đẩy file nặng lên git (đã có `.gitignore`). Commit sau mỗi bước hoàn thành, message tiếng Việt ngắn gọn.
 - Notebook Kaggle: người dùng tự chạy trên Kaggle; Claude Code chỉ chuẩn bị file `.ipynb` và hướng dẫn từng bước bấm gì.
 - Khi cần thông tin không có trong file này (đường dẫn, kết quả chạy, lỗi), **hỏi người dùng** thay vì đoán.
+
+---
+
+## 11. Code bộ khung tuần 1 (tạo nguyên văn nếu chưa có)
+Ba file rỗng: `realtime/core/__init__.py`, `realtime/detectors/__init__.py`, `realtime/shared/__init__.py`.
+
+### `realtime/config.yaml`
+```yaml
+# 0 = webcam laptop | "http://<ip-dien-thoai>:8080/video" | duong dan file video
+source: 0
+
+pose:
+  model: models/yolov8n-pose_openvino_model
+  imgsz: 416
+  conf: 0.3
+
+sample_fps: 15        # FPS cua chuoi khung xuong dua vao mo hinh (khop voi luc train)
+
+ui:
+  window: "Giam sat hanh vi"
+  panel_width: 340
+```
+
+### `realtime/shared/sampling.py`
+```python
+class FpsSampler:
+    """Chon frame theo thoi gian de chuoi dua vao mo hinh luon dung target_fps,
+    bat ke camera/video goc chay 22, 25 hay 30 FPS."""
+
+    def __init__(self, target_fps=15):
+        self.period = 1.0 / target_fps
+        self.next_t = None
+
+    def tick(self, t):
+        """t: thoi diem cua frame (giay). Tra ve True neu frame nay duoc lay mau."""
+        if self.next_t is None:
+            self.next_t = t + self.period
+            return True
+        if t + 1e-6 >= self.next_t:
+            self.next_t += self.period
+            if t - self.next_t > self.period:       # may bi lag qua xa -> bat kip, khong don frame
+                self.next_t = t + self.period
+            return True
+        return False
+```
+
+### `realtime/core/camera.py`
+```python
+import threading, time
+from pathlib import Path
+import cv2
+
+VIDEO_EXT = {".mp4", ".avi", ".mov", ".mkv", ".mpeg", ".mpg"}
+
+
+class VideoSource:
+    """- Webcam / camera dien thoai: doc o luong rieng, luon tra frame moi nhat, tu ket noi lai.
+       - File video: doc tuan tu tung frame, thoi gian tinh theo video (dung cho kiem thu)."""
+
+    def __init__(self, src):
+        if isinstance(src, str) and src.isdigit():
+            src = int(src)
+        self.src = src
+        self.is_file = isinstance(src, str) and Path(src).suffix.lower() in VIDEO_EXT
+        self.cap = self._open()
+        if not self.cap.isOpened():
+            raise RuntimeError(f"Khong mo duoc nguon video: {src}")
+
+        if self.is_file:
+            fps = self.cap.get(cv2.CAP_PROP_FPS)
+            self.fps = fps if 1 < fps < 121 else 30.0
+            self.idx = 0
+        else:
+            self.frame, self.t, self.seq = None, 0.0, 0
+            self.lock = threading.Lock()
+            self.running = True
+            threading.Thread(target=self._loop, daemon=True).start()
+
+    def _open(self):
+        cap = cv2.VideoCapture(self.src)
+        if not self.is_file:
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        return cap
+
+    def _loop(self):
+        fails = 0
+        while self.running:
+            ok, f = self.cap.read()
+            if ok:
+                fails = 0
+                with self.lock:
+                    self.frame, self.t, self.seq = f, time.monotonic(), self.seq + 1
+            else:
+                fails += 1
+                time.sleep(0.05)
+                if fails >= 40:                       # ~2 giay khong co hinh -> mo lai
+                    print("Mat tin hieu camera, dang ket noi lai...")
+                    self.cap.release()
+                    time.sleep(1.0)
+                    self.cap = self._open()
+                    fails = 0
+
+    def read(self):
+        """Tra ve (ok, frame, thoi_diem_giay, so_thu_tu_frame)."""
+        if self.is_file:
+            ok, f = self.cap.read()
+            if not ok:
+                return False, None, None, None
+            t = self.idx / self.fps
+            self.idx += 1
+            return True, f, t, self.idx
+        with self.lock:
+            return self.frame is not None, self.frame, self.t, self.seq
+
+    def release(self):
+        if not self.is_file:
+            self.running = False
+            time.sleep(0.1)
+        self.cap.release()
+```
+
+### `realtime/core/pose.py`
+```python
+from ultralytics import YOLO
+
+
+class PoseTracker:
+    """YOLOv8n-pose + ByteTrack. Tra ve dict {track_id: {"box": xyxy, "kpts": (17,3)}} theo pixel."""
+
+    def __init__(self, model_path, imgsz=416, conf=0.3):
+        self.model = YOLO(str(model_path), task="pose")
+        self.imgsz, self.conf = imgsz, conf
+
+    def __call__(self, frame):
+        r = self.model.track(frame, imgsz=self.imgsz, conf=self.conf, persist=True,
+                             tracker="bytetrack.yaml", device="cpu", verbose=False)[0]
+        tracks = {}
+        if r.boxes is not None and r.boxes.id is not None:
+            ids = r.boxes.id.int().tolist()
+            boxes = r.boxes.xyxy.cpu().numpy()
+            kpts = r.keypoints.data.cpu().numpy()
+            for tid, b, k in zip(ids, boxes, kpts):
+                tracks[tid] = {"box": b, "kpts": k}
+        return tracks
+```
+
+### `realtime/core/ui.py`
+```python
+import os, time
+import cv2, numpy as np
+from PIL import Image, ImageDraw, ImageFont
+
+EDGES = [(5, 7), (7, 9), (6, 8), (8, 10), (5, 6), (5, 11), (6, 12),
+         (11, 12), (11, 13), (13, 15), (12, 14), (14, 16), (0, 1), (0, 2), (1, 3), (2, 4)]
+
+
+def _load_font(size):
+    for p in ["C:/Windows/Fonts/arial.ttf",
+              "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+              "/System/Library/Fonts/Supplemental/Arial.ttf"]:
+        if os.path.exists(p):
+            return ImageFont.truetype(p, size)
+    return ImageFont.load_default()
+
+
+FONT, FONT_B = _load_font(16), _load_font(20)
+
+
+def draw_tracks(img, tracks, highlight=frozenset(), kp_thr=0.3):
+    """Ve khung, khung xuong, ID. Nguoi trong `highlight` ve mau do."""
+    for tid, tr in tracks.items():
+        color = (0, 0, 255) if tid in highlight else (0, 200, 0)
+        x1, y1, x2, y2 = tr["box"].astype(int)
+        cv2.rectangle(img, (x1, y1), (x2, y2), color, 2)
+        k = tr["kpts"]
+        for a, b in EDGES:
+            if k[a, 2] > kp_thr and k[b, 2] > kp_thr:
+                cv2.line(img, (int(k[a, 0]), int(k[a, 1])), (int(k[b, 0]), int(k[b, 1])), color, 2)
+        for x, y, c in k:
+            if c > kp_thr:
+                cv2.circle(img, (int(x), int(y)), 3, (255, 255, 255), -1)
+        cv2.putText(img, f"ID {tid}", (x1, max(y1 - 6, 14)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+    return img
+
+
+def draw_alert_border(img, thickness=8):
+    cv2.rectangle(img, (0, 0), (img.shape[1] - 1, img.shape[0] - 1), (0, 0, 255), thickness)
+    return img
+
+
+def draw_panel(h, width, events, fps, n_people):
+    """Bang thong tin ben phai, ho tro tieng Viet co dau."""
+    panel = Image.new("RGB", (width, h), (25, 25, 25))
+    d = ImageDraw.Draw(panel)
+    d.text((12, 10), "GIÁM SÁT HÀNH VI", font=FONT_B, fill=(255, 255, 255))
+    d.text((12, 40), f"FPS: {fps:.1f}    Số người: {n_people}", font=FONT, fill=(150, 230, 150))
+    d.text((12, 66), "Cảnh báo gần đây:", font=FONT, fill=(200, 200, 200))
+    y = 92
+    if not events:
+        d.text((12, y), "  (chưa có)", font=FONT, fill=(120, 120, 120))
+    for e in events:
+        if y > h - 40:
+            break
+        color = (255, 80, 80) if time.time() - e["t"] < 5 else (200, 200, 200)
+        d.text((12, y), f"{e['time']}  {e['type']}", font=FONT, fill=color)
+        ids = ", ".join(map(str, e.get("ids", []))) or "-"
+        d.text((12, y + 20), f"    người: {ids}", font=FONT, fill=(160, 160, 160))
+        y += 46
+    return cv2.cvtColor(np.array(panel), cv2.COLOR_RGB2BGR)
+```
+
+### `realtime/main.py`
+```python
+import sys, time
+from collections import deque
+from datetime import datetime
+from pathlib import Path
+import cv2, numpy as np, yaml
+
+ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(ROOT))
+
+from core.camera import VideoSource
+from core.pose import PoseTracker
+from core.ui import draw_tracks, draw_panel, draw_alert_border
+from shared.sampling import FpsSampler
+
+
+def load_config():
+    with open(ROOT / "config.yaml", encoding="utf-8") as f:
+        return yaml.safe_load(f)
+
+
+def main():
+    cfg = load_config()
+    src = sys.argv[1] if len(sys.argv) > 1 else cfg["source"]   # python main.py <nguon> de ghi de
+    cam = VideoSource(src)
+    pose = PoseTracker(ROOT / cfg["pose"]["model"], cfg["pose"]["imgsz"], cfg["pose"]["conf"])
+    sampler = FpsSampler(cfg["sample_fps"])
+
+    events = deque(maxlen=12)          # tuan 2: EventManager se them su kien vao day
+    win, panel_w = cfg["ui"]["window"], cfg["ui"]["panel_width"]
+    (ROOT / "events").mkdir(exist_ok=True)
+    cv2.namedWindow(win, cv2.WINDOW_NORMAL)
+
+    fps, t_last, last_seq = 0.0, time.perf_counter(), None
+    print("Dang chay. Bam q de thoat, s de chup man hinh.")
+
+    while True:
+        ok, frame, t, seq = cam.read()
+        if cam.is_file and not ok:
+            break                                    # het video
+        if not ok or seq == last_seq:
+            time.sleep(0.003)                        # chua co frame moi tu camera
+            continue
+        last_seq = seq
+
+        tracks = pose(frame)
+
+        if sampler.tick(t):
+            pass        # tuan 2-3: dua `tracks` vao bo dem cua cac detector o day
+
+        out = draw_tracks(frame.copy(), tracks)
+        if events and time.time() - events[0]["t"] < 3:
+            draw_alert_border(out)
+
+        now = time.perf_counter()
+        fps = 0.9 * fps + 0.1 / max(now - t_last, 1e-6)
+        t_last = now
+
+        canvas = np.hstack([out, draw_panel(out.shape[0], panel_w, events, fps, len(tracks))])
+        cv2.imshow(win, canvas)
+
+        key = cv2.waitKey(1) & 0xFF
+        if key in (ord("q"), 27):
+            break
+        if key == ord("s"):
+            p = ROOT / "events" / f"manual_{datetime.now():%Y%m%d_%H%M%S}.jpg"
+            cv2.imwrite(str(p), canvas)
+            print("Da luu", p)
+
+    cam.release()
+    cv2.destroyAllWindows()
+
+
+if __name__ == "__main__":
+    main()
+```
