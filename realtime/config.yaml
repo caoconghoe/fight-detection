@@ -22,3 +22,53 @@ ui:
   window: "HTTM - Giam sat (q: thoat, s: chup anh)"
 
 snapshot_dir: events/snapshots
+
+events:                         # EventManager (core/events.py)
+  cooldown_sec: 10              # cùng (loại, tập ID) không báo lại trong N giây
+  fight_hold_sec: 3             # ID vừa đánh nhau ≤ N giây -> bỏ các cảnh báo thấp hơn của ID đó
+  fall_upgrade_sec: 30          # NẰM BẤT ĐỘNG trong N giây sau TÉ NGÃ -> "TÉ NGÃ RỒI NẰM BẤT ĐỘNG"
+
+# Mọi thời lượng tính bằng giây; khoảng cách/tốc độ chuẩn hoá theo kích thước người.
+detectors:
+  fight:                        # ĐÁNH NHAU (detectors/fight.py)
+    enabled: true
+    model: models/pair_tcn.onnx          # chưa có file -> dùng luật giả
+    model_config: models/fight_config.json
+    infer_every: 4              # chạy mô hình mỗi N tick lấy mẫu
+    ema_alpha: 0.4
+    threshold: 0.6              # dùng khi fight_config.json không ghi threshold
+    hold_sec: 1.0               # EMA > ngưỡng liên tục N giây mới báo
+    fake_dist: 1.0              # luật giả: khoảng cách tâm < N × chiều cao người
+    fake_wrist_speed: 2.0       # luật giả: tốc độ cổ tay TB > N chiều cao/giây
+
+  fall:                         # TÉ NGÃ (detectors/fall.py)
+    enabled: true
+    drop_speed: 1.2             # hông rơi > N "thân người" trong 1 s
+    angle_deg: 60               # thân lệch khỏi phương đứng > N độ = đang nằm
+    hold_sec: 2.0               # nằm sau khi rơi ≥ N giây mới báo
+
+  pose_rules:                   # GIƠ TAY / VẪY TAY / NẰM BẤT ĐỘNG / ÔM ĐẦU (detectors/pose_rules.py)
+    enabled: true
+    hands_up: true
+    hands_up_sec: 2.5
+    wave: true
+    wave_sec: 3.0
+    wave_turns: 5               # số lần đổi hướng tối thiểu
+    wave_amplitude: 0.4         # biên độ ≥ N × chiều dài thân
+    lying_still: true
+    still_sec: 10.0
+    still_speed: 0.08           # khớp di chuyển < N thân/giây = bất động
+    distress: true              # ÔM ĐẦU / GỤC ĐẦU
+    distress_sec: 10.0
+    distress_slumped: true      # false = tắt nhánh "gục đầu" (dễ nhầm với cúi xem điện thoại)
+    cooldown_sec: 15.0          # mỗi (ID, luật)
+
+  panic:                        # HOẢNG LOẠN (detectors/panic.py)
+    enabled: true
+    run_speed: 1.5              # chạy = tốc độ > N chiều cao người/giây
+    min_people: 4               # demo trong phòng: 3
+    min_running: 3
+    run_ratio: 0.5
+    surge_ratio: 2.0            # tốc độ TB cả cảnh > N × mức nền
+    hold_sec: 1.0
+    cooldown_sec: 10

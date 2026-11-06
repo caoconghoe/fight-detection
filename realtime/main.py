@@ -6,6 +6,7 @@ Phím: q / Esc = thoát, s = lưu ảnh chụp màn hình.
 """
 import argparse
 import time
+from collections import deque
 from datetime import datetime
 from pathlib import Path
 
@@ -13,6 +14,7 @@ import cv2
 import yaml
 
 from core.camera import Camera
+from core.events import EventManager, build_detectors
 from core.pose import PoseTracker
 from core.ui import UI
 from shared.sampling import FpsSampler
@@ -39,6 +41,8 @@ def main():
     pc = cfg["pose"]
     pose = PoseTracker(ROOT / pc["model"], pc["imgsz"], pc["conf"], pc["tracker"])
     sampler = FpsSampler(cfg["sample_fps"])
+    manager = EventManager(build_detectors(cfg), **cfg["events"])
+    print("Detector:", ", ".join(d.name for d in manager.detectors) or "(chua co)")
     uc = cfg["ui"]
     ui = UI(uc["font_size"], uc["kpt_conf"], uc["panel_width"], uc["new_sec"])
     win = uc["window"]
@@ -47,7 +51,8 @@ def main():
 
     if not a.no_show:
         cv2.namedWindow(win, cv2.WINDOW_NORMAL)
-    alerts = []                                   # sẽ do EventManager cung cấp (bước A1)
+    alerts = deque(maxlen=50)                     # cảnh báo gần đây, mới nhất trước
+    highlight = set()
     WARMUP = 10                                   # bỏ 10 frame đầu khỏi thống kê (OpenVINO khởi động)
     n = n_sampled = 0
     fps = pose_ms = None
@@ -65,7 +70,13 @@ def main():
             ms = (time.perf_counter() - t0) * 1000
             pose_ms = ms if pose_ms is None else 0.9 * pose_ms + 0.1 * ms
 
-            sampled = sampler.tick(t)             # detector chạy khi sampled (bước A1+)
+            sampled = sampler.tick(t)
+            if sampled:                           # detector chỉ chạy ở frame lấy mẫu (15 FPS)
+                events, highlight = manager.update(frame, tracks, t)
+                for e in events:
+                    e["time"], e["t"] = datetime.now().strftime("%H:%M:%S"), time.time()
+                    alerts.appendleft(e)
+                    print(f"[{e['time']}] {e['type']} | ID {e['ids']} | conf {e['confidence']}")
 
             now = time.perf_counter()
             dt, loop_t = now - loop_t, now
@@ -83,7 +94,7 @@ def main():
                 status = [f"FPS: {fps:.1f}  |  YOLO: {pose_ms:.0f} ms",
                           f"Số người: {len(tracks)}",
                           f"Nguồn: {cam.name}"]
-            view = ui.draw(frame, tracks, status, alerts)
+            view = ui.draw(frame, tracks, status, alerts, highlight)
 
             if not a.no_show:
                 cv2.imshow(win, view)
