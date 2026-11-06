@@ -187,11 +187,16 @@ CELLS = [
 
     def process(path):
         npz = load_npz(path)
-        inst, tracks_k = F.clip_instances(npz)
+        inst, tracks_k = F.clip_instances(npz)                            # tiêu chí mặc định F.PARAMS
         K = len(sampling.sample_indices(list(F.clip_times(npz)), F.FPS))   # số frame mẫu của clip
+        per_k = {}
+        for d in tracks_k.values():
+            for k in d:
+                per_k[k] = per_k.get(k, 0) + 1
         st = dict(dur=float(npz["n_frames"]) / float(npz["fps"]), K=K,
-                  n_win=max(1, (K - F.WINDOW) // F.STRIDE + 1), n_inst=len(inst), n_tracks=len(tracks_k),
-                  n_win_pair=len({s for _, _, s, _, _ in inst}))
+                  n_win=len(F.window_starts(0, K - 1)), n_inst=len(inst), n_tracks=len(tracks_k),
+                  n_win_pair=len({s for _, _, s, _, _ in inst}), max_people=max(per_k.values(), default=0),
+                  reason=F.explain_no_pairs(tracks_k, K) or "co_instance")
         W = F.WINDOW
         kp = np.zeros((len(inst), 2, W, 17, 3), np.float32)
         box = np.zeros((len(inst), 2, W, 4), np.float32)
@@ -238,6 +243,74 @@ CELLS = [
     display(pd.crosstab([meta.ds, meta.sp], lab, values=meta.has_inst, aggfunc="sum", margins=True))
     print(f"== Tong so instance: {len(KP)} | thoi gian dung instance: {BUILD_SEC:.1f} s")
     display(meta.groupby(["ds", "sp", lab])["n_inst"].agg(["sum", "mean", "median", "max"]).round(1))
+    print("Tieu chi ghep cap (F.PARAMS):", F.PARAMS)
+    """),
+    md("""
+    ### Chẩn đoán: vì sao clip KHÔNG có instance
+    (a) clip ngắn hơn 1 cửa sổ (< 32 frame mẫu) · (b) không frame nào có ≥ 2 người (sau nối tracklet) ·
+    (c) có ≥ 2 người nhưng không cặp nào đủ thời gian có mặt chung trong cửa sổ · (d) đủ thời gian nhưng quá xa nhau.
+    """),
+    code("""
+    noinst = meta[~meta.has_inst]
+    print(f"== {len(noinst)} / {len(meta)} clip khong co instance – ly do theo dataset / split / nhan")
+    display(pd.crosstab([noinst.ds, noinst.sp, noinst.y.map({0: "0 NonFight", 1: "1 Fight"})], noinst.reason,
+                        margins=True))
+    print("== So nguoi toi da cung luc (sau noi tracklet) cua cac clip khong co instance")
+    display(pd.crosstab(noinst.y.map({0: "0 NonFight", 1: "1 Fight"}), noinst.max_people.clip(upper=5), margins=True))
+    for y, name in ((1, "Fight"), (0, "NonFight")):
+        top = noinst[noinst.y == y].reason.value_counts()
+        if len(top):
+            print(f"Ly do nhieu nhat (clip {name} khong co instance): {top.index[0]} ({top.iloc[0]}/{top.sum()} clip)")
+        else:
+            print(f"Moi clip {name} deu co instance")
+    top = noinst[noinst.y == 1].reason.value_counts()
+    if len(top) and top.index[0] == "b_khong_co_2_nguoi":
+        print("!! Clip Fight: ly do (b) chiem nhieu nhat – YOLO/tracker chi bat duoc 1 nguoi "
+              "-> nới tieu chi ghep cap khong giup duoc, can xem lai buoc trich khung xuong.")
+    """),
+    md("""
+    ### Quét mức tiêu chí ghép cặp (mỗi mức thêm 1 thay đổi; áp dụng **như nhau** cho Fight và NonFight)
+    Mục tiêu: ≥ 85% clip Fight có instance. Mức cuối = tiêu chí mặc định trong `features.PARAMS` (dùng để train
+    và dùng trong realtime).
+    """),
+    code("""
+    SWEEP = True
+    LEVELS = [
+        ("0 ≈ cu: chung 60%, lap 3, 1.5x, bo -1, khong dem",
+         dict(min_copresence=0.6, max_fill=3, near_ratio=1.5, assign_iou=None, pad_short=False, tail_window=False)),
+        ("1 + dem clip ngan, cua so cuoi", dict(min_copresence=0.6, max_fill=3, near_ratio=1.5, assign_iou=None)),
+        ("2 + lap toi 8 frame", dict(min_copresence=0.6, near_ratio=1.5, assign_iou=None)),
+        ("3 + co mat chung 40%", dict(near_ratio=1.5, assign_iou=None)),
+        ("4 + khoang cach 2.0x", dict(assign_iou=None)),
+        ("5 + gan detection -1 (= MAC DINH)", dict()),
+    ]
+
+    def has_instance(args):
+        path, kw = args
+        return len(F.clip_instances(load_npz(path), **kw)[0]) > 0
+
+    if SWEEP:
+        t0 = time.time()
+        jobs = [(p, kw) for _, kw in LEVELS for p in meta.path]
+        if N_WORKERS > 1:
+            with Pool(N_WORKERS) as pool:
+                flags = pool.map(has_instance, jobs, chunksize=16)
+        else:
+            flags = [has_instance(j) for j in jobs]
+        flags = np.array(flags).reshape(len(LEVELS), len(meta))
+        rows = []
+        for (name, _), f in zip(LEVELS, flags):
+            r = {"muc": name}
+            for (ds, sp), g in meta.groupby(["ds", "sp"]):
+                r[f"Fight {ds} {sp}"] = f[g.index[g.y == 1]].mean()
+            r["Fight TONG"] = f[meta.index[meta.y == 1]].mean()
+            r["NonFight TONG"] = f[meta.index[meta.y == 0]].mean()
+            r["dat 85%"] = "DAT" if r["Fight TONG"] >= 0.85 else "chua"
+            rows.append(r)
+        sweep = pd.DataFrame(rows)
+        sweep.to_csv(os.path.join(WORK, "pair_criteria_sweep.csv"), index=False)
+        print(f"Ti le clip co >= 1 instance theo muc tieu chi ({time.time() - t0:.0f} s)")
+        display(sweep.round(3))
     """),
     md("""
     ### Kiểm tra lệch FPS (RLVS: Violence ~29.6 FPS, NonViolence ~24.9 FPS)
@@ -277,6 +350,8 @@ CELLS = [
     cov = pd.concat([cov, meta[meta.y == 1].groupby("sp").agg(clip_fight=("y", "size"), co_instance=("has_inst", "sum"),
                      recall_toi_da=("has_inst", "mean")).reset_index().assign(ds="GOP")], ignore_index=True)
     display(cov.round(3))
+    tot = meta[meta.y == 1].has_inst.mean()
+    print(f"Clip Fight co instance: {tot:.1%} -> muc tieu >= 85%: {'DAT' if tot >= 0.85 else 'CHUA DAT'}")
     cov.to_csv(os.path.join(WORK, "instance_coverage.csv"), index=False)
     meta.drop(columns=["path"]).to_csv(os.path.join(WORK, "clip_stats.csv"), index=False)
     """),

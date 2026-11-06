@@ -99,22 +99,26 @@ def test_fill_gaps():
         box[i] = [i, i, i + 10, i + 20]
         kp[i, :, :2], kp[i, :, 2] = i, 0.9
         present[i] = True
-    valid = F.fill_gaps(box, kp, present)
+    valid = F.fill_gaps(box.copy(), kp.copy(), present, max_fill=3)
     assert valid.tolist() == [1, 1, 1, 1, 0, 0, 0, 0, 0, 1]
+    assert F.fill_gaps(box.copy(), kp.copy(), present).all()            # mặc định lấp tới 8 frame
+    valid = F.fill_gaps(box, kp, present, max_fill=3)
     assert np.allclose(kp[1, :, 0], 1) and np.allclose(box[2, 0], 2)
     assert np.all(kp[5] == 0)
 
 
 def test_feature_shape_and_pairs():
     wins = F.build_pair_windows(F.clip_instances(fake_npz(30))[1])
-    assert len(wins) == (75 - 32) // 8 + 1                             # 6 cửa sổ, 1 cặp mỗi cửa sổ
+    assert len(wins) == (75 - 32) // 8 + 1 + 1                         # 6 cửa sổ trượt + 1 cửa sổ cuối
     a, b, t0, f = wins[1]
     assert (a, b) == (1, 2) and abs(t0 - 8 / 15) < 1e-6 and f.shape == (32, F.FEAT_DIM) and f.dtype == np.float32
     assert np.isfinite(f).all()
 
 
 def test_far_people_no_pair():
-    assert F.clip_instances(fake_npz(30, gap=400))[0] == []           # cách 600 px > 1.5 × 300
+    assert F.clip_instances(fake_npz(30, gap=500))[0] == []           # cách 700 px > 2.0 × 300
+    assert F.clip_instances(fake_npz(30, gap=350))[0] != []           # cách 550 px ≤ 2.0 × 300 (mức cũ 1.5 thì không)
+    assert F.clip_instances(fake_npz(30, gap=350), near_ratio=1.5)[0] == []
 
 
 def test_single_person_no_pair():
@@ -126,7 +130,7 @@ def test_max_pairs():
     rng = np.random.default_rng(0)
     tk = {tid: {k: person(400 + 60 * tid, 450, H=300, rng=rng) for k in range(32)} for tid in range(8)}
     tk = {tid: {k: (v["box"], v["kpts"]) for k, v in d.items()} for tid, d in tk.items()}
-    assert len(F.build_pair_instances(tk)) == F.MAX_PAIRS
+    assert len(F.build_pair_instances(tk)) == F.PARAMS["max_pairs"]
 
 
 def test_low_conf_zeroed():
@@ -177,6 +181,58 @@ def test_fight_moves_more_than_still():
     v = lambda fight: np.abs(np.stack([F.pair_features(A, B) for *_, A, B in F.clip_instances(  # noqa: E731
         fake_npz(30, fight=fight))[0]])[..., 122:124]).mean()
     assert v(True) > 5 * v(False), (v(True), v(False))
+
+
+def test_short_clip_padded():
+    npz = fake_npz(30, 1.2)                                            # 18 frame mẫu < 32
+    inst, _ = F.clip_instances(npz)
+    assert len(inst) == 1 and inst[0][3]["valid"].sum() == 18 and np.all(inst[0][3]["kpts"][18:] == 0)
+    assert F.clip_instances(npz, pad_short=False)[0] == []
+
+
+def test_tail_window_covers_end():
+    assert F.window_starts(0, 74) == [0, 8, 16, 24, 32, 40, 43]
+    assert F.window_starts(0, 71) == [0, 8, 16, 24, 32, 40]             # vừa khít -> không thêm
+    assert F.window_starts(0, 74, tail_window=False)[-1] == 40
+
+
+def test_unassigned_detections_attached():
+    npz = fake_npz(30, 3.0)
+    d = npz["data"]
+    d[(d[:, 1] == 2) & (d[:, 0] % 3 == 0), 1] = -1                    # 1/3 detection của ID 2 chưa có ID
+    n_full = len(F.tracks_from_npz(fake_npz(30, 3.0))[2])
+    assert len(F.tracks_from_npz(npz)[2]) == n_full                     # gán lại đủ
+    assert len(F.tracks_from_npz(npz, assign_iou=None)[2]) < n_full
+    assert sum(len(v) for v in F.tracks_from_npz(npz).values()) == len(d)   # không gán nhầm sang ID 1
+
+
+def test_copresence_40():
+    # ID 2 chỉ xuất hiện ở 14/32 frame đầu (44%) -> đạt 40%, không đạt 60%
+    npz = fake_npz(30, 32 / 15, drop=lambda i, tid: tid == 2 and i >= 28)
+    assert F.clip_instances(npz)[0] != []
+    assert F.clip_instances(npz, min_copresence=0.6)[0] == []
+
+
+def test_explain_reasons():
+    def why(npz):
+        tk = F.clip_tracks(npz)
+        n = len(F.sample_indices(list(F.clip_times(npz)), F.FPS))
+        return F.explain_no_pairs(tk, n)
+    assert why(fake_npz(30)) is None
+    assert why(fake_npz(30, 0.6)) is None                               # clip ngắn đủ 2 người: đệm -> có instance
+    assert why(fake_npz(30, 0.6, drop=lambda i, tid: tid == 2)) == "a_clip_ngan"
+    assert why(fake_npz(30, drop=lambda i, tid: tid == 2)) == "b_khong_co_2_nguoi"
+    assert why(fake_npz(30, drop=lambda i, tid: (tid == 2) == (i < 75))) == "b_khong_co_2_nguoi"   # thay phiên
+    assert why(fake_npz(30, drop=lambda i, tid: tid == 2 and (i // 10) % 3 != 0)) == "c_khong_du_co_mat_chung"
+    assert why(fake_npz(30, gap=500)) == "d_qua_xa"
+
+
+def test_unknown_param_rejected():
+    try:
+        F.clip_instances(fake_npz(30, 1.0), min_presence=0.5)
+    except TypeError:
+        return
+    raise AssertionError("tham so la phai bao loi")
 
 
 if __name__ == "__main__":
