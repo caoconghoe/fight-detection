@@ -1,0 +1,7 @@
+ds,sp,clip_fight,co_instance,recall_toi_da
+RLVS,train,800,755,0.94375
+RLVS,val,200,186,0.93
+RWF,train,800,623,0.77875
+RWF,val,200,175,0.875
+GOP,train,1600,1378,0.86125
+GOP,val,400,361,0.9025

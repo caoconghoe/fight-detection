@@ -3,5 +3,6 @@ __pycache__/
 realtime/models/*.pt
 realtime/models/*_openvino_model/
 realtime/models/*.onnx
+!realtime/models/pair_tcn.onnx
 realtime/events/
 data_selfrecorded/

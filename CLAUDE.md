@@ -52,7 +52,10 @@
 | **OpenVINO** | **21.5** | **46.5** |
 
 **Thông số chốt:**
-- Mô hình pose realtime: `realtime/models/yolov8n-pose_openvino_model/`, `imgsz=416`, `conf=0.3`, tracker `bytetrack.yaml`.
+- Mô hình pose realtime: `realtime/models/yolov8n-pose_openvino_model/`, `imgsz=416`, `conf=0.3`, tracker `realtime/trackers/bytetrack_httm.yaml` (track_buffer 60).
+- **Mô hình YOLO OpenVINO KHÔNG có trong git** – tự tạo bằng: `python realtime/tools/benchmark.py --backend openvino`
+  (tự tải `yolov8n-pose.pt` nếu chưa có, export OpenVINO imgsz 416 vào `realtime/models/`, rồi đo FPS trên webcam; bấm `q` để thoát).
+- Mô hình đánh nhau `realtime/models/pair_tcn.onnx` + `fight_config.json` **có trong git** (sinh từ notebook `kaggle/02_train.ipynb`).
 - YOLO + tracking chạy **mọi frame camera** (~30 FPS) để ID ổn định.
 - **`sample_fps = 15`**: chuỗi khung xương đưa vào mô hình/luật được **lấy mẫu theo thời gian về đúng 15 FPS** (dùng `shared/sampling.py::FpsSampler`). Train trên Kaggle cũng phải lấy mẫu đúng như vậy. Lý do: RLVS có clip chỉ ~22 FPS, mô hình học vận tốc/gia tốc nên FPS train và chạy thật phải khớp.
 
@@ -108,7 +111,7 @@ Lệnh chạy (từ thư mục `httm`): `python realtime/main.py [nguồn]` – 
 
 **Đã xong:**
 - Môi trường `.venv` Python 3.12, cài đủ thư viện, đo FPS (bảng trên), export OpenVINO.
-- Repo git đã khởi tạo, có `.gitignore` (bỏ `.venv/`, `__pycache__/`, `realtime/models/*.pt`, `realtime/models/*_openvino_model/`, `realtime/models/*.onnx`, `realtime/events/`, `data_selfrecorded/`).
+- Repo git đã khởi tạo, có `.gitignore` (bỏ `.venv/`, `__pycache__/`, `realtime/models/*.pt`, `realtime/models/*_openvino_model/`, `realtime/models/*.onnx` trừ `pair_tcn.onnx`, `realtime/events/`, `data_selfrecorded/`).
 - Bộ khung tuần 1 (`main.py`, `config.yaml`, `core/camera.py`, `core/pose.py`, `core/ui.py`, `shared/sampling.py`): code đầy đủ ở **mục 11**. Nếu trong thư mục chưa có thì tạo từ mục 11, rồi chạy thử (bước A0).
 - Kaggle: notebook `01_extract_pose` (tài khoản `hocaoaa`) đang chạy version #1 trích xuất khung xương cho 4000 clip (xem mục 6).
 
