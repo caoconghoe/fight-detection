@@ -17,6 +17,7 @@ from core.camera import Camera, FpsMeter
 from core.db import EventDB, slug
 from core.events import EventManager, build_detectors
 from core.pose import PoseTracker
+from core.recorder import ClipRecorder
 from core.ui import UI
 from shared.sampling import FpsSampler
 
@@ -51,11 +52,15 @@ def main():
     snap_dir = ROOT / cfg["snapshot_dir"]
     print(f"Nguon: {cam.name} | backend: {cam.backend} | {cam.width}x{cam.height} | FPS khai bao: {cam.fps:.1f}")
 
-    def save_snapshot(view, e):
-        """Lưu ảnh (tên không dấu), trả về đường dẫn tuyệt đối hoặc None nếu lỗi."""
-        snap_dir.mkdir(parents=True, exist_ok=True)
+    def event_name(e):
+        """Tên file (không dấu) cho ảnh/clip của sự kiện, vd 20261106_120110_danh_nhau_id1-2."""
         ids = "-".join(str(i) for i in e["ids"])
-        p = snap_dir / f"{datetime.now():%Y%m%d_%H%M%S}_{slug(e['type'])}_id{ids}.jpg"
+        return f"{datetime.now():%Y%m%d_%H%M%S}_{slug(e['type'])}_id{ids}"
+
+    def save_snapshot(view, name):
+        """Lưu ảnh, trả về đường dẫn tuyệt đối hoặc None nếu lỗi."""
+        snap_dir.mkdir(parents=True, exist_ok=True)
+        p = snap_dir / f"{name}.jpg"
         if cv2.imwrite(str(p), view):
             return p
         print("LOI luu anh:", p)
@@ -74,6 +79,10 @@ def main():
     status, status_t = [], 0.0
     debug_on = False                              # phím d: hiện bộ đếm từng luật trên khung mỗi người
     db = EventDB(ROOT / cfg["db_path"])
+    rc = dict(cfg.get("recorder") or {})
+    recorder = None
+    if rc.pop("enabled", True):                   # clip 3 s trước + 2 s sau mỗi sự kiện, ghi ở luồng nền
+        recorder = ClipRecorder(ROOT / rc.pop("dir", "events/clips"), on_done=db.set_clip, **rc)
     session = db.start_session(source, cfg)
     print(f"Session #{session} | DB: {db.path}")
     reason = "loi / Ctrl+C"
@@ -120,9 +129,14 @@ def main():
                     status += ["DEBUG (phím d để tắt)"] + manager.debug({})[1]
             dbg = manager.debug(tracks)[0] if debug_on else None
             view = ui.draw(frame, tracks, status, alerts, highlight, debug=dbg)
+            if recorder:
+                recorder.push(view, t)
             for e in events:                      # ảnh chụp đã có khung đỏ + cảnh báo trên panel
-                snap = save_snapshot(view, e)
+                name = event_name(e)
+                snap = save_snapshot(view, name)
                 e["id"] = db.add_event(session, e["type"], e["severity"], e["ids"], e["confidence"], snap)
+                if recorder:
+                    recorder.trigger(e["id"], name, t)
 
             if not a.no_show:
                 cv2.imshow(win, view)
@@ -145,6 +159,8 @@ def main():
                 reason = f"du {a.frames} frame"
                 break
     finally:                                      # q, nút X, hết video, Ctrl+C hay lỗi đều đóng session
+        if recorder:
+            recorder.close()                      # ghi nốt clip đang gom dở, chờ luồng ghi (cần db còn mở)
         db.end_session(session)
         db.close()
         cam.release()

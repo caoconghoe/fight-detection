@@ -28,6 +28,16 @@ ui:
 snapshot_dir: events/snapshots
 db_path: events/events.db
 
+recorder:                       # clip .mp4 quanh mỗi sự kiện (core/recorder.py)
+  enabled: true
+  dir: events/clips
+  fps: 15                       # lưu buffer ở 15 FPS (đủ xem lại, tiết kiệm bộ nhớ)
+  buffer_sec: 5                 # giữ 5 s khung hình đã vẽ gần nhất
+  pre_sec: 3                    # clip = 3 s trước ...
+  post_sec: 2                   # ... + 2 s sau sự kiện
+  max_width: 1280               # thu nhỏ khung rộng hơn (camera điện thoại 1080p) để giới hạn RAM
+  codec: mp4v
+
 events:                         # EventManager (core/events.py)
   cooldown_sec: 10              # cùng (loại, tập ID) không báo lại trong N giây
   fight_hold_sec: 3             # ID vừa đánh nhau ≤ N giây -> bỏ các cảnh báo thấp hơn của ID đó
