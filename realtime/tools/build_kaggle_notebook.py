@@ -178,25 +178,106 @@ CELLS = [
     print("npz mau:", {k: (v.shape, v.dtype) for k, v in z.items()})
     """),
     md("""
-    ## 4. Dựng instance (cặp × cửa sổ)
-    Mỗi clip: npz → theo track (pixel) → **lấy mẫu 15 FPS theo thời gian** → nối tracklet → cửa sổ 32 / bước 8 →
-    cặp ứng viên. Lưu **chuỗi khung xương thô** của mỗi instance (để tăng cường dữ liệu trước khi tính đặc trưng).
+    ## 4a. Chọn tiêu chí ghép cặp (quét mức, mỗi mức cộng dồn; áp dụng **như nhau** cho Fight và NonFight)
+    Mức 5 = mặc định trong `features.PARAMS`. Với mỗi mức: tỉ lệ clip có ≥ 1 instance, số instance TB/clip và
+    **tỉ lệ frame bị đệm 0** trong instance (nới quá thì instance toàn số 0 – vô ích).
+    **Tự chọn:** mức thấp nhất có Fight ≥ 85% và frame đệm < 30% (cả 2 nhãn); không mức nào đạt 85% → mức có Fight
+    cao nhất thỏa điều kiện đệm. Mức được chọn dùng để dựng instance train và ghi vào `fight_config.json` (realtime).
     """),
     code("""
     from multiprocessing import Pool
 
-    def process(path):
+    SWEEP = True            # False: bỏ quét, dùng PAIR_MANUAL
+    PAIR_MANUAL = {}        # chỉ dùng khi SWEEP = False ({} = mặc định F.PARAMS)
+    TARGET_FIGHT, MAX_PAD = 0.85, 0.30
+    _old = dict(min_copresence=0.6, max_fill=3, near_ratio=1.5, assign_iou=None)
+    _link = dict(link_gap_sec=1.0, link_dist=1.0)
+    LEVELS = [
+        ("0 ≈ cu: chung 60%, lap 3, 1.5x, bo -1, khong dem", dict(_old, pad_short=False, tail_window=False)),
+        ("1 + dem clip ngan, cua so cuoi", dict(_old)),
+        ("2 + lap toi 8 frame", dict(_old, max_fill=8)),
+        ("3 + co mat chung 40%", dict(near_ratio=1.5, assign_iou=None)),
+        ("4 + khoang cach 2.0x", dict(assign_iou=None)),
+        ("5 + gan detection -1 (= MAC DINH F.PARAMS)", dict()),
+        ("6 + noi tracklet 1.0 s, 1.0x chieu cao", dict(_link)),
+        ("7 + co mat chung 30%", dict(_link, min_copresence=0.3)),
+        ("8 + co mat chung 25%", dict(_link, min_copresence=0.25)),
+    ]
+
+    def level_stats(args):
+        \"\"\"-> (số instance, số frame-người bị đệm 0 trong các instance, tổng số frame-người)\"\"\"
+        path, kw = args
+        inst, _ = F.clip_instances(load_npz(path), **kw)
+        pad = sum(int((~A["valid"]).sum() + (~B["valid"]).sum()) for *_, A, B in inst)
+        return len(inst), pad, 2 * F.WINDOW * len(inst)
+
+    if SWEEP:
+        t0 = time.time()
+        jobs = [(p, kw) for _, kw in LEVELS for p in meta.path]
+        if N_WORKERS > 1:
+            with Pool(N_WORKERS) as pool:
+                out = pool.map(level_stats, jobs, chunksize=16)
+        else:
+            out = [level_stats(j) for j in jobs]
+        out = np.array(out, float).reshape(len(LEVELS), len(meta), 3)
+        rows = []
+        for (name, _), o in zip(LEVELS, out):
+            n_inst, pad, tot = o[:, 0], o[:, 1], o[:, 2]
+            r = {"muc": name}
+            for (ds, sp), g in meta.groupby(["ds", "sp"]):
+                r[f"Fight {ds} {sp}"] = (n_inst[g.index[g.y == 1]] > 0).mean()
+            for y, nm in ((1, "Fight"), (0, "NonFight")):
+                idx = meta.index[meta.y == y]
+                r[f"{nm} TONG"] = (n_inst[idx] > 0).mean()
+                r[f"inst/clip {nm}"] = n_inst[idx].mean()
+                r[f"dem% {nm}"] = pad[idx].sum() / max(tot[idx].sum(), 1)
+            r["dat 85%"] = r["Fight TONG"] >= TARGET_FIGHT
+            r["dem < 30%"] = max(r["dem% Fight"], r["dem% NonFight"]) < MAX_PAD
+            rows.append(r)
+        sweep = pd.DataFrame(rows)
+        good = sweep[sweep["dat 85%"] & sweep["dem < 30%"]]
+        if len(good):
+            pick, why = good.index[0], f"muc thap nhat co Fight >= {TARGET_FIGHT:.0%} va dem < {MAX_PAD:.0%}"
+        elif sweep["dem < 30%"].any():
+            pick = sweep[sweep["dem < 30%"]]["Fight TONG"].idxmax()
+            why = f"KHONG muc nao dat {TARGET_FIGHT:.0%} -> muc co Fight cao nhat thoa dem < {MAX_PAD:.0%}"
+        else:
+            pick, why = 5, f"KHONG muc nao co dem < {MAX_PAD:.0%} -> giu mac dinh (muc 5)"
+        sweep["chon"] = np.where(sweep.index == pick, "<== CHON", "")
+        sweep.to_csv(os.path.join(WORK, "pair_criteria_sweep.csv"), index=False)
+        print(f"Quet {len(LEVELS)} muc tren {len(meta)} clip ({time.time() - t0:.0f} s)")
+        display(sweep.round(3))
+        PAIR_NAME, PAIR = LEVELS[pick]
+    else:
+        PAIR_NAME, PAIR, why = "thu cong (PAIR_MANUAL)", dict(PAIR_MANUAL), "SWEEP = False"
+    PAIR_PARAMS = {**F.PARAMS, **PAIR}
+    print("=" * 100)
+    print(f"MUC DUOC CHON: {PAIR_NAME}  ({why})")
+    print("Tieu chi ghep cap dung de train:", PAIR_PARAMS)
+    if PAIR_PARAMS != F.PARAMS:
+        print("!! Khac mac dinh F.PARAMS -> da ghi vao fight_config.json (pair_params); "
+              "can cap nhat PARAMS trong realtime/shared/features.py cho khop.")
+    print("=" * 100)
+    """),
+    md("""
+    ## 4b. Dựng instance (cặp × cửa sổ) theo tiêu chí đã chọn
+    Mỗi clip: npz → theo track (pixel) → **lấy mẫu 15 FPS theo thời gian** → nối tracklet → cửa sổ 32 / bước 8 →
+    cặp ứng viên. Lưu **chuỗi khung xương thô** của mỗi instance (để tăng cường dữ liệu trước khi tính đặc trưng).
+    """),
+    code("""
+    def process(args):
+        path, kw = args
         npz = load_npz(path)
-        inst, tracks_k = F.clip_instances(npz)                            # tiêu chí mặc định F.PARAMS
+        inst, tracks_k = F.clip_instances(npz, **kw)                      # tiêu chí đã chọn ở 4a
         K = len(sampling.sample_indices(list(F.clip_times(npz)), F.FPS))   # số frame mẫu của clip
         per_k = {}
         for d in tracks_k.values():
             for k in d:
                 per_k[k] = per_k.get(k, 0) + 1
         st = dict(dur=float(npz["n_frames"]) / float(npz["fps"]), K=K,
-                  n_win=len(F.window_starts(0, K - 1)), n_inst=len(inst), n_tracks=len(tracks_k),
+                  n_win=len(F.window_starts(0, K - 1, **kw)), n_inst=len(inst), n_tracks=len(tracks_k),
                   n_win_pair=len({s for _, _, s, _, _ in inst}), max_people=max(per_k.values(), default=0),
-                  reason=F.explain_no_pairs(tracks_k, K) or "co_instance")
+                  reason=F.explain_no_pairs(tracks_k, K, **kw) or "co_instance")
         W = F.WINDOW
         kp = np.zeros((len(inst), 2, W, 17, 3), np.float32)
         box = np.zeros((len(inst), 2, W, 4), np.float32)
@@ -207,12 +288,12 @@ CELLS = [
         return kp, box, valid, st
 
     t0 = time.time()
-    paths = meta.path.tolist()
+    jobs = [(p, PAIR) for p in meta.path]
     if N_WORKERS > 1:
         with Pool(N_WORKERS) as pool:
-            res = pool.map(process, paths, chunksize=8)
+            res = pool.map(process, jobs, chunksize=8)
     else:
-        res = [process(p) for p in paths]
+        res = [process(j) for j in jobs]
     BUILD_SEC = time.time() - t0
 
     KP = np.concatenate([r[0] for r in res])
@@ -243,7 +324,7 @@ CELLS = [
     display(pd.crosstab([meta.ds, meta.sp], lab, values=meta.has_inst, aggfunc="sum", margins=True))
     print(f"== Tong so instance: {len(KP)} | thoi gian dung instance: {BUILD_SEC:.1f} s")
     display(meta.groupby(["ds", "sp", lab])["n_inst"].agg(["sum", "mean", "median", "max"]).round(1))
-    print("Tieu chi ghep cap (F.PARAMS):", F.PARAMS)
+    print(f"Tieu chi ghep cap ({PAIR_NAME}):", PAIR_PARAMS)
     """),
     md("""
     ### Chẩn đoán: vì sao clip KHÔNG có instance
@@ -267,50 +348,6 @@ CELLS = [
     if len(top) and top.index[0] == "b_khong_co_2_nguoi":
         print("!! Clip Fight: ly do (b) chiem nhieu nhat – YOLO/tracker chi bat duoc 1 nguoi "
               "-> nới tieu chi ghep cap khong giup duoc, can xem lai buoc trich khung xuong.")
-    """),
-    md("""
-    ### Quét mức tiêu chí ghép cặp (mỗi mức thêm 1 thay đổi; áp dụng **như nhau** cho Fight và NonFight)
-    Mục tiêu: ≥ 85% clip Fight có instance. Mức cuối = tiêu chí mặc định trong `features.PARAMS` (dùng để train
-    và dùng trong realtime).
-    """),
-    code("""
-    SWEEP = True
-    LEVELS = [
-        ("0 ≈ cu: chung 60%, lap 3, 1.5x, bo -1, khong dem",
-         dict(min_copresence=0.6, max_fill=3, near_ratio=1.5, assign_iou=None, pad_short=False, tail_window=False)),
-        ("1 + dem clip ngan, cua so cuoi", dict(min_copresence=0.6, max_fill=3, near_ratio=1.5, assign_iou=None)),
-        ("2 + lap toi 8 frame", dict(min_copresence=0.6, near_ratio=1.5, assign_iou=None)),
-        ("3 + co mat chung 40%", dict(near_ratio=1.5, assign_iou=None)),
-        ("4 + khoang cach 2.0x", dict(assign_iou=None)),
-        ("5 + gan detection -1 (= MAC DINH)", dict()),
-    ]
-
-    def has_instance(args):
-        path, kw = args
-        return len(F.clip_instances(load_npz(path), **kw)[0]) > 0
-
-    if SWEEP:
-        t0 = time.time()
-        jobs = [(p, kw) for _, kw in LEVELS for p in meta.path]
-        if N_WORKERS > 1:
-            with Pool(N_WORKERS) as pool:
-                flags = pool.map(has_instance, jobs, chunksize=16)
-        else:
-            flags = [has_instance(j) for j in jobs]
-        flags = np.array(flags).reshape(len(LEVELS), len(meta))
-        rows = []
-        for (name, _), f in zip(LEVELS, flags):
-            r = {"muc": name}
-            for (ds, sp), g in meta.groupby(["ds", "sp"]):
-                r[f"Fight {ds} {sp}"] = f[g.index[g.y == 1]].mean()
-            r["Fight TONG"] = f[meta.index[meta.y == 1]].mean()
-            r["NonFight TONG"] = f[meta.index[meta.y == 0]].mean()
-            r["dat 85%"] = "DAT" if r["Fight TONG"] >= 0.85 else "chua"
-            rows.append(r)
-        sweep = pd.DataFrame(rows)
-        sweep.to_csv(os.path.join(WORK, "pair_criteria_sweep.csv"), index=False)
-        print(f"Ti le clip co >= 1 instance theo muc tieu chi ({time.time() - t0:.0f} s)")
-        display(sweep.round(3))
     """),
     md("""
     ### Kiểm tra lệch FPS (RLVS: Violence ~29.6 FPS, NonViolence ~24.9 FPS)
@@ -567,6 +604,7 @@ CELLS = [
 
     cfg = {"fps": F.FPS, "window": F.WINDOW, "stride": F.STRIDE, "feat_dim": F.FEAT_DIM,
            "mean": ck["mean"].tolist(), "std": ck["std"].tolist(), "threshold": THRESHOLD,
+           "pair_params": PAIR_PARAMS, "pair_level": PAIR_NAME,
            "trained_on": ck["train_ds"], "best_epoch": ck["epoch"], "val": {k: float(v) for k, v in ck["val"].items()},
            "input_note": "x = (pair_features - mean) / std; output logit theo instance, sigmoid -> xac suat"}
     with open(os.path.join(WORK, "fight_config.json"), "w") as f:
