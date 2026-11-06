@@ -87,7 +87,9 @@ def test_link_tracklets():
         d[later, 2:6:2] += shift
         return F.link_tracklets(F.sample_tracks(F.tracks_from_npz(npz), 15, F.clip_times(npz)))
     assert 7 not in split(9) and len(split(9)[1]) >= 70                # vắng 0.3 s -> gộp
-    assert 7 in split(30)                                              # vắng 1 s -> không gộp
+    assert 7 not in split(24)                                          # vắng 0.8 s -> gộp (link_gap_sec 1.0)
+    assert 7 in split(45)                                              # vắng 1.5 s -> không gộp
+    assert 7 in split(24, shift=0.3)                                   # nhảy 384 px > 1.0 × 300 -> không gộp
     assert 7 in split(9, shift=0.3)                                    # nhảy xa -> không gộp
 
 
@@ -223,7 +225,7 @@ def test_explain_reasons():
     assert why(fake_npz(30, 0.6, drop=lambda i, tid: tid == 2)) == "a_clip_ngan"
     assert why(fake_npz(30, drop=lambda i, tid: tid == 2)) == "b_khong_co_2_nguoi"
     assert why(fake_npz(30, drop=lambda i, tid: (tid == 2) == (i < 75))) == "b_khong_co_2_nguoi"   # thay phiên
-    assert why(fake_npz(30, drop=lambda i, tid: tid == 2 and (i // 10) % 3 != 0)) == "c_khong_du_co_mat_chung"
+    assert why(fake_npz(30, drop=lambda i, tid: tid == 2 and (i // 10) % 8 != 0)) == "c_khong_du_co_mat_chung"  # ≤ 16% < 30%
     assert why(fake_npz(30, gap=500)) == "d_qua_xa"
 
 

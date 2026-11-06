@@ -210,10 +210,11 @@ Viết hàm thuần numpy, không phụ thuộc ultralytics/cv2.
 
 1. **Chuyển dữ liệu** về dạng theo track: `{tid: list[(t_giây, box_pixel(4), kpts_pixel(17,3))]}`.
 2. **Lấy mẫu 15 FPS** bằng logic `FpsSampler` (theo thời gian `t = frame_idx / fps`).
-3. **Nối tracklet** (chỉ cần ở offline; realtime giữ ID bằng ByteTrack persist): track A kết thúc tại t, track B bắt đầu trong ≤ 0.5 s, khoảng cách tâm box < 0.5 × chiều cao box → gộp B vào A. Track `-1` bỏ.
-4. **Lấp frame thiếu** của một người trong cửa sổ: nội suy tuyến tính nếu khoảng trống ≤ 3 frame mẫu, ngược lại để 0 và conf 0.
+3. **Nối tracklet** (chỉ cần ở offline; realtime giữ ID bằng ByteTrack persist): track A kết thúc tại t, track B bắt đầu trong ≤ 1.0 s, khoảng cách tâm box < 1.0 × chiều cao box → gộp B vào A. Detection track `-1` → gán vào track gần nhất nếu IoU > 0.5, không thì bỏ.
+4. **Lấp frame thiếu** của một người trong cửa sổ: nội suy tuyến tính nếu khoảng trống ≤ 8 frame mẫu, ngược lại để 0 và conf 0. Clip < 32 frame mẫu: 1 cửa sổ đệm 0; thêm cửa sổ cuối căn về cuối clip.
 5. **Cửa sổ:** `WINDOW = 32` frame mẫu (~2.1 s), bước trượt `STRIDE = 8`.
-6. **Chọn cặp ứng viên trong cửa sổ:** cả 2 người có mặt ≥ 60% frame; tại ít nhất 1 frame khoảng cách tâm box ≤ 1.5 × chiều cao trung bình. Tối đa 6 cặp gần nhau nhất / cửa sổ.
+6. **Chọn cặp ứng viên trong cửa sổ:** 2 người cùng có mặt ≥ 30% frame; tại ít nhất 1 frame khoảng cách tâm box ≤ 2.0 × chiều cao trung bình. Tối đa 6 cặp gần nhau nhất / cửa sổ.
+   **Mọi tiêu chí nằm DUY NHẤT trong `features.PARAMS`** (mức 7 của bảng quét notebook 02). Realtime ưu tiên `pair_params` trong `fight_config.json`.
 7. **Đặc trưng mỗi frame của cặp (A, B)** – chuẩn hoá: gốc toạ độ = trung điểm tâm hông của A và B (nếu thiếu hông dùng tâm box), thang đo = chiều cao box trung bình của 2 người. Keypoint conf < 0.3 → toạ độ 0, conf 0.
    - (x, y) 17 khớp của A và B → 68
    - conf 17 khớp của A và B → 34

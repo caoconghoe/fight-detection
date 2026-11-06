@@ -179,7 +179,7 @@ CELLS = [
     """),
     md("""
     ## 4a. Chọn tiêu chí ghép cặp (quét mức, mỗi mức cộng dồn; áp dụng **như nhau** cho Fight và NonFight)
-    Mức 5 = mặc định trong `features.PARAMS`. Với mỗi mức: tỉ lệ clip có ≥ 1 instance, số instance TB/clip và
+    Mức 7 = mặc định hiện tại trong `features.PARAMS`. Với mỗi mức: tỉ lệ clip có ≥ 1 instance, số instance TB/clip và
     **tỉ lệ frame bị đệm 0** trong instance (nới quá thì instance toàn số 0 – vô ích).
     **Tự chọn:** mức thấp nhất có Fight ≥ 85% và frame đệm < 30% (cả 2 nhãn); không mức nào đạt 85% → mức có Fight
     cao nhất thỏa điều kiện đệm. Mức được chọn dùng để dựng instance train và ghi vào `fight_config.json` (realtime).
@@ -190,19 +190,31 @@ CELLS = [
     SWEEP = True            # False: bỏ quét, dùng PAIR_MANUAL
     PAIR_MANUAL = {}        # chỉ dùng khi SWEEP = False ({} = mặc định F.PARAMS)
     TARGET_FIGHT, MAX_PAD = 0.85, 0.30
-    _old = dict(min_copresence=0.6, max_fill=3, near_ratio=1.5, assign_iou=None)
-    _link = dict(link_gap_sec=1.0, link_dist=1.0)
+    # Mỗi mức ghi ĐỦ giá trị (không phụ thuộc mặc định F.PARAMS), cộng dồn từ mức trước
+    L0 = dict(min_copresence=0.6, max_fill=3, near_ratio=1.5, assign_iou=None, pad_short=False, tail_window=False,
+              link_gap_sec=0.5, link_dist=0.5)
+    L1 = dict(L0, pad_short=True, tail_window=True)
+    L2 = dict(L1, max_fill=8)
+    L3 = dict(L2, min_copresence=0.4)
+    L4 = dict(L3, near_ratio=2.0)
+    L5 = dict(L4, assign_iou=0.5)
+    L6 = dict(L5, link_gap_sec=1.0, link_dist=1.0)
+    L7 = dict(L6, min_copresence=0.3)
+    L8 = dict(L7, min_copresence=0.25)
     LEVELS = [
-        ("0 ≈ cu: chung 60%, lap 3, 1.5x, bo -1, khong dem", dict(_old, pad_short=False, tail_window=False)),
-        ("1 + dem clip ngan, cua so cuoi", dict(_old)),
-        ("2 + lap toi 8 frame", dict(_old, max_fill=8)),
-        ("3 + co mat chung 40%", dict(near_ratio=1.5, assign_iou=None)),
-        ("4 + khoang cach 2.0x", dict(assign_iou=None)),
-        ("5 + gan detection -1 (= MAC DINH F.PARAMS)", dict()),
-        ("6 + noi tracklet 1.0 s, 1.0x chieu cao", dict(_link)),
-        ("7 + co mat chung 30%", dict(_link, min_copresence=0.3)),
-        ("8 + co mat chung 25%", dict(_link, min_copresence=0.25)),
+        ("0 ≈ cu: chung 60%, lap 3, 1.5x, bo -1, khong dem", L0),
+        ("1 + dem clip ngan, cua so cuoi", L1),
+        ("2 + lap toi 8 frame", L2),
+        ("3 + co mat chung 40%", L3),
+        ("4 + khoang cach 2.0x", L4),
+        ("5 + gan detection -1", L5),
+        ("6 + noi tracklet 1.0 s, 1.0x chieu cao", L6),
+        ("7 + co mat chung 30%", L7),
+        ("8 + co mat chung 25%", L8),
     ]
+    for name, kw in LEVELS:
+        if {**F.PARAMS, **kw} == F.PARAMS:
+            print("Muc trung voi mac dinh F.PARAMS:", name)
 
     def level_stats(args):
         \"\"\"-> (số instance, số frame-người bị đệm 0 trong các instance, tổng số frame-người)\"\"\"
@@ -242,7 +254,8 @@ CELLS = [
             pick = sweep[sweep["dem < 30%"]]["Fight TONG"].idxmax()
             why = f"KHONG muc nao dat {TARGET_FIGHT:.0%} -> muc co Fight cao nhat thoa dem < {MAX_PAD:.0%}"
         else:
-            pick, why = 5, f"KHONG muc nao co dem < {MAX_PAD:.0%} -> giu mac dinh (muc 5)"
+            pick = next(i for i, (_, kw) in enumerate(LEVELS) if {**F.PARAMS, **kw} == F.PARAMS)
+            why = f"KHONG muc nao co dem < {MAX_PAD:.0%} -> giu muc trung mac dinh F.PARAMS"
         sweep["chon"] = np.where(sweep.index == pick, "<== CHON", "")
         sweep.to_csv(os.path.join(WORK, "pair_criteria_sweep.csv"), index=False)
         print(f"Quet {len(LEVELS)} muc tren {len(meta)} clip ({time.time() - t0:.0f} s)")

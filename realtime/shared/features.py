@@ -28,18 +28,20 @@ KPT_CONF = 0.3              # keypoint conf < ngưỡng -> toạ độ 0, conf 0
 FAR = 3.0                   # khoảng cách khi thiếu dữ liệu (và giới hạn trên), đơn vị chiều cao người
 VEL_CLIP = 1.0              # chặn vận tốc (chiều cao / frame mẫu) – bỏ nhảy do đổi ID
 
-# Tiêu chí ghép cặp / dựng cửa sổ – MỘT NGUỒN DUY NHẤT (truyền **kw để thử mức khác, vd khi chẩn đoán)
+# Tiêu chí ghép cặp / dựng cửa sổ – MỘT NGUỒN DUY NHẤT (truyền **kw để thử mức khác, vd khi chẩn đoán).
+# Mặc định = mức 7 của bảng quét trong notebook 02 (Fight có instance 86%, frame đệm 21%/16% – QUICK).
+# Realtime ưu tiên "pair_params" trong models/fight_config.json (tiêu chí mô hình thực sự được train).
 PARAMS = dict(
     window=WINDOW, stride=STRIDE,
-    min_copresence=0.4,     # 2 người cùng có mặt (sau khi lấp) ≥ 40% số frame của cửa sổ
+    min_copresence=0.3,     # 2 người cùng có mặt (sau khi lấp) ≥ 30% số frame của cửa sổ
     max_fill=8,             # lấp (nội suy) khoảng trống ≤ 8 frame mẫu (~0.5 s)
     near_ratio=2.0,         # ≥ 1 frame có khoảng cách tâm box ≤ 2.0 × chiều cao TB của 2 người
     max_pairs=6,            # tối đa 6 cặp gần nhau nhất / cửa sổ
     tail_window=True,       # thêm cửa sổ cuối căn về cuối clip (không bỏ sót đoạn cuối)
     pad_short=True,         # clip < 1 cửa sổ: vẫn tạo 1 cửa sổ, phần thiếu đệm 0 (conf 0)
     assign_iou=0.5,         # offline: detection track_id = -1 -> gán vào track gần nhất nếu IoU > 0.5 (None = bỏ)
-    link_gap_sec=0.5,       # nối tracklet: B bắt đầu ≤ 0.5 s sau khi A kết thúc...
-    link_dist=0.5,          # ...và tâm box cách nhau < 0.5 × chiều cao box của A
+    link_gap_sec=1.0,       # nối tracklet: B bắt đầu ≤ 1.0 s sau khi A kết thúc...
+    link_dist=1.0,          # ...và tâm box cách nhau < 1.0 × chiều cao box của A
 )
 
 HEAD = [0, 1, 2, 3, 4]
