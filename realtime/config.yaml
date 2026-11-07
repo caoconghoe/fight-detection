@@ -98,3 +98,19 @@ detectors:
     surge_ratio: 2.0            # tốc độ TB cả cảnh > N × mức nền
     hold_sec: 1.0
     cooldown_sec: 10
+
+# LUỒNG 2 – nhìn ảnh màu cả cảnh (CLAUDE.md mục 12). Ánh xạ lớp UCF-Crime -> nhóm: NGUỒN DUY NHẤT,
+# tools/build_scene_notebooks.py chép nguyên mục này vào notebook 04/05. Lớp không có trong dữ liệu tự bỏ qua.
+# Tên lớp = tên thư mục (hoặc tiền tố tên file); mọi thư mục có chữ "Normal" -> lớp Normal.
+scene:
+  groups:
+    BẠO LỰC: [Fighting, Assault, Abuse, Arrest, Shooting]
+    CƯỚP: [Robbery]
+    CHÁY NỔ: [Arson, Explosion]
+    ĐỘT NHẬP/TRỘM: [Burglary, Stealing, Shoplifting, Vandalism]
+    TAI NẠN: [RoadAccidents]
+    BÌNH THƯỜNG: [Normal, NonFight, NonViolence]   # NonFight (RWF-2000), NonViolence (RLVS): thêm mẫu bình thường
+  normal_group: BÌNH THƯỜNG
+  eval_only:                    # có trích đặc trưng nhưng KHÔNG dùng để train: chỉ để đo AUC mức clip trên RWF/RLVS val
+    Fight: BẠO LỰC
+    Violence: BẠO LỰC

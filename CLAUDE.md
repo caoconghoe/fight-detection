@@ -31,8 +31,13 @@
 | 6 | VẪY TAY CẦU CỨU | Luật tư thế | 60 |
 | 7 | NẰM BẤT ĐỘNG | Luật tư thế | 60 |
 | 8 | ÔM ĐẦU / GỤC ĐẦU | Luật tư thế | 40 |
+| 9 | CẢNH BẤT THƯỜNG: <nhóm> | **Luồng 2** – ảnh màu cả cảnh, MobileNetV3 + MIL train trên UCF-Crime (mục 12) | 50 |
 
-**Để ở mục "hướng phát triển" (KHÔNG làm bây giờ):** đồ vật bị bỏ lại, cháy/khói, vũ khí, phá hoại/trộm đồ, backend Spring Boot xem lịch sử cảnh báo.
+Hệ thống có **2 luồng chạy song song**: **luồng 1** = khung xương (YOLO-pose → loại 1–8, mục 5–9);
+**luồng 2** = nhìn cả cảnh (mục 12) – bắt bất thường không thể hiện rõ qua tư thế (cướp, cháy nổ, đột nhập, tai nạn...).
+
+**Để ở mục "hướng phát triển" (KHÔNG làm bây giờ):** đồ vật bị bỏ lại, vũ khí, backend Spring Boot xem lịch sử cảnh báo.
+**Việc sau (đã ghi nhận, CHƯA làm):** phát hiện cháy/khói bằng **YOLO riêng** (luồng 2 chỉ cho nhóm CHÁY NỔ ở mức cả cảnh).
 
 ---
 
@@ -72,8 +77,10 @@ httm/
 ├── README.md                 # (tuần 7)
 ├── kaggle/
 │   ├── 01_extract_pose.ipynb # ĐÃ CÓ trên Kaggle (đang chạy) – tải bản về lưu ở đây
-│   ├── 02_train.ipynb        # cần viết
-│   └── 03_export.ipynb       # có thể gộp vào 02
+│   ├── 02_train.ipynb        # ĐÃ CÓ (luồng 1) – sinh bởi tools/build_kaggle_notebook.py
+│   ├── 04_scene_features.ipynb # luồng 2: trích đặc trưng MobileNetV3 – sinh bởi tools/build_scene_notebooks.py
+│   ├── 05_scene_train.ipynb  # luồng 2: train MIL + xuất ONNX (cần viết)
+│   └── results/              # bảng kết quả train / đánh giá
 ├── data_selfrecorded/        # video nhóm tự quay (gitignore)
 └── realtime/
     ├── main.py               # ĐÃ CÓ
@@ -90,16 +97,20 @@ httm/
     │   ├── fight.py          # cần viết: Pair-TCN (tạm dùng luật giả khi chưa có .onnx)
     │   ├── fall.py           # cần viết
     │   ├── pose_rules.py     # cần viết
-    │   └── panic.py          # cần viết
+    │   ├── panic.py
+    │   └── scene.py          # luồng 2 (cần viết): luồng nền 2 FPS, OpenVINO
     ├── shared/
     │   ├── sampling.py       # ĐÃ CÓ – DÙNG CHUNG với Kaggle
-    │   └── features.py       # cần viết – DÙNG CHUNG với Kaggle
-    ├── models/               # yolov8n-pose.pt, *_openvino_model/, pair_tcn.onnx, fight_config.json
+    │   ├── features.py       # DÙNG CHUNG với Kaggle (luồng 1)
+    │   └── scene.py          # DÙNG CHUNG với Kaggle (luồng 2): hằng số, nhận lớp, tiền xử lý ảnh
+    ├── models/               # yolov8n-pose.pt, *_openvino_model/, pair_tcn.onnx, fight_config.json,
+    │                         # scene_backbone.onnx, scene_head.onnx, scene_config.json (luồng 2)
     ├── tools/
     │   ├── benchmark.py      # ĐÃ CÓ
     │   ├── review.py         # cần viết
     │   ├── evaluate.py       # cần viết
-    │   └── build_kaggle_notebook.py  # cần viết (xem mục 7)
+    │   ├── build_kaggle_notebook.py  # sinh 02_train.ipynb (mục 7)
+    │   └── build_scene_notebooks.py  # sinh 04/05 (mục 12)
     └── events/               # ảnh, clip, events.db sinh ra khi chạy (gitignore)
 ```
 
@@ -107,7 +118,7 @@ Lệnh chạy (từ thư mục `httm`): `python realtime/main.py [nguồn]` – 
 
 ---
 
-## 4. Trạng thái hiện tại (cập nhật 2026-11-06)
+## 4. Trạng thái hiện tại (cập nhật 2026-11-08)
 
 **Đã xong (code trong repo là nguồn chính xác nhất; mục 11 chỉ là bộ khung tuần 1 ban đầu, nay đã mở rộng):**
 - Môi trường `.venv` Python 3.12, đo FPS, export OpenVINO. Repo GitHub `caoconghoe/fight-detection`.
@@ -128,6 +139,10 @@ Lệnh chạy (từ thư mục `httm`): `python realtime/main.py [nguồn]` – 
   mô hình chỉ cho điểm cao ở giây cuối). Webcam 640×480 vẫn ~30 FPS khi bật mô hình.
 - **D2:** `tools/evaluate.py` (nhãn theo tiền tố tên file, CSV vào `kaggle/results/`). **D3:** `run.bat`, `README.md`.
 - Unit test: `realtime/tests/test_*.py` (features, fight, pose_rules, body_rules, recorder, evaluate).
+
+**Đang làm – LUỒNG 2 (mục 12, quyết định 2026-11-08):** đã có `shared/scene.py`, mục `scene` trong config,
+`kaggle/04_scene_features.ipynb` (chạy thử trên máy bằng dữ liệu giả: quét, chống trùng, chia split, trích, chạy tiếp
+đều đúng); chờ người dùng chạy QUICK trên Kaggle. Notebook 03 trích khung xương UCF: **tạm dừng / không làm**.
 
 **Còn lại:**
 - Thử webcam với **2 người thật** (Mốc C): giả vờ đánh nhau → báo đúng cặp, khung đỏ; mẫu âm khó (ôm, đập tay, bắt tay).
@@ -176,8 +191,10 @@ Mọi detector giả định dữ liệu vào ở **15 FPS** (đọc từ `confi
 ```python
 PRIORITY = {"ĐÁNH NHAU": 100, "TÉ NGÃ RỒI NẰM BẤT ĐỘNG": 90, "HOẢNG LOẠN": 85,
             "TÉ NGÃ": 80, "GIƠ TAY ĐẦU HÀNG": 70, "VẪY TAY CẦU CỨU": 60,
-            "NẰM BẤT ĐỘNG": 60, "ÔM ĐẦU / GỤC ĐẦU": 40}
+            "NẰM BẤT ĐỘNG": 60, "CẢNH BẤT THƯỜNG": 50, "ÔM ĐẦU / GỤC ĐẦU": 40}
 ```
+Sự kiện luồng 2 có `type = "CẢNH BẤT THƯỜNG: <nhóm>"` (vd `CẢNH BẤT THƯỜNG: CƯỚP`), `ids = []` (cả cảnh);
+mức ưu tiên tra theo phần trước dấu ":" (= 50). Cooldown tính riêng từng nhóm (vì type khác nhau).
 
 ### 5.5 SQLite (`core/db.py`) – dùng đúng schema này
 ```python
@@ -198,6 +215,10 @@ CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts);
 CREATE INDEX IF NOT EXISTS idx_events_type ON events(type);
 """
 ```
+**Luồng 2 bổ sung 3 cột** vào `events` (DB cũ tự `ALTER TABLE ... ADD COLUMN` khi mở): `scene_score REAL`
+(điểm bất thường luồng 2 lúc báo), `scene_group TEXT` (nhóm luồng 2 lúc báo), `fight_score REAL` (EMA đánh nhau
+lớn nhất của luồng 1 lúc báo). **Mọi** sự kiện (của cả 2 luồng) đều ghi đủ 3 cột để so sánh.
+
 Lớp `EventDB(path="realtime/events/events.db")`: `PRAGMA journal_mode=WAL`, `check_same_thread=False` + `threading.Lock`. Hàm: `start_session(source, config)`, `end_session(id)`, `add_event(session_id, type, severity, ids, confidence, snapshot, clip) -> id`, `set_clip(event_id, path)`, `review(event_id, is_true, note)`, `unreviewed()`, `stats()` (theo type: total, reviewed, correct, precision).
 
 ---
@@ -300,6 +321,16 @@ Viết `realtime/tools/build_kaggle_notebook.py` sinh ra `kaggle/02_train.ipynb`
 - [ ] **D1.** *(chưa làm)* Hỗ trợ fine-tune bằng video tự quay (`data_selfrecorded/`): đánh nhau dàn dựng nhẹ + mẫu âm khó (ôm nhau, đập tay, vươn vai, vẫy chào, cúi xem điện thoại). Tạo script trích xuất khung xương chạy được trên Kaggle cho thư mục này.
 - [x] **D2.** `tools/evaluate.py`: chạy pipeline không hiển thị trên thư mục video + file nhãn CSV, xuất precision/recall từng loại, FPS, độ trễ báo động. Dataset kiểm tra luật: **UR Fall / Le2i** (té ngã), **UMN** (hoảng loạn). *(Đã có công cụ – nhãn lấy theo tiền tố tên file thay cho file CSV; CHƯA chạy trên UR Fall / Le2i / UMN.)*
 - [x] **D3.** `run.bat` (kích hoạt venv + chạy main), `README.md` hướng dẫn cài đặt/chạy.
+
+### Giai đoạn E – LUỒNG 2: nhìn cả cảnh (mục 12)
+- [x] **E0.** `shared/scene.py`, mục `scene` trong `config.yaml`, `tools/build_scene_notebooks.py`, test `tests/test_scene.py`.
+- [ ] **E1.** `kaggle/04_scene_features.ipynb` – *đã viết + chạy thử trên máy; CHỜ chạy QUICK rồi đầy đủ trên Kaggle.*
+- [ ] **E2.** `kaggle/05_scene_train.ipynb` – train MIL (ranking loss Sultani 2018) + head phân nhóm; đánh giá; xuất ONNX.
+- [ ] **E3.** `detectors/scene.py` – luồng nền 2 FPS (backbone OpenVINO), làm mượt, báo ≥ 2 s; đo FPS luồng 1 không giảm.
+- [ ] **E4.** DB thêm `scene_score`, `scene_group`, `fight_score` cho mọi sự kiện; `evaluate.py` bảng so sánh
+  chỉ luồng 1 / chỉ luồng 2 / kết hợp.
+- **Mốc E:** AUC mức frame trên UCF test ≥ 0.75 (tham khảo: Sultani 2018 với C3D ≈ 0.75); FPS luồng 1 không giảm.
+- **Việc sau (chưa làm):** cháy/khói bằng YOLO riêng.
 
 **Nếu thiếu thời gian, cắt theo thứ tự:** ÔM ĐẦU / GỤC ĐẦU → demo HOẢNG LOẠN chỉ bằng video UMN. **Luôn giữ:** đánh nhau, té ngã, giơ tay đầu hàng, database.
 
@@ -857,3 +888,58 @@ def main():
 if __name__ == "__main__":
     main()
 ```
+
+---
+
+## 12. LUỒNG 2 – nhìn ảnh màu cả cảnh (UCF-Crime), chạy song song luồng 1
+
+**Mục đích:** luồng 1 (khung xương) giữ nguyên. Luồng 2 nhìn cả khung hình màu để bắt bất thường mức cảnh mà tư thế
+không thể hiện (cướp, cháy nổ, đột nhập/trộm, tai nạn...). Hai luồng độc lập, kết quả cùng vào `EventManager`.
+
+### 12.1 Thiết kế (đã chốt với người dùng 2026-11-08)
+- **Đầu vào:** frame lấy mẫu **2 FPS theo thời gian** (`FpsSampler`), resize **224×224** (ép cả khung, không cắt) –
+  `shared/scene.py::prep`.
+- **Đặc trưng:** **MobileNetV3-Large** pretrained ImageNet (`IMAGENET1K_V2`), **đóng băng**, 1 vector 960 chiều / frame
+  (sau global average pooling). Chuẩn hoá ImageNet nằm **trong** mô hình (vào uint8 RGB `(B, 224, 224, 3)`).
+- **Đoạn:** 16 frame mẫu (~8 s) → mạng nhỏ (MLP hoặc GRU) → **điểm bất thường 0..1** + **nhóm**.
+- **Nhóm** (ánh xạ trong `config.yaml: scene.groups` – nguồn duy nhất; lớp không có trong dữ liệu tự bỏ qua):
+  BẠO LỰC: Fighting, Assault, Abuse, Arrest, Shooting · CƯỚP: Robbery · CHÁY NỔ: Arson, Explosion ·
+  ĐỘT NHẬP/TRỘM: Burglary, Stealing, Shoplifting, Vandalism · TAI NẠN: RoadAccidents ·
+  BÌNH THƯỜNG: mọi thư mục có chữ "Normal" + NonFight (RWF-2000) + NonViolence (RLVS).
+  `scene.eval_only`: Fight (RWF), Violence (RLVS) → trích đặc trưng nhưng **không train**, chỉ đo AUC mức clip.
+- **Train:** MIL kiểu **Sultani 2018** – ranking loss giữa video bất thường và video bình thường (nhãn cấp video:
+  điểm đoạn cao nhất của video bất thường > của video bình thường; + ràng buộc mượt theo thời gian và thưa) +
+  **head phân nhóm** chỉ học trên video bất thường (nhãn nhóm cấp video).
+- **Đánh giá:** AUC **mức frame** trên UCF test (theo chú thích thời gian); AUC **mức clip** trên RWF/RLVS val;
+  độ chính xác phân nhóm trên video bất thường test.
+- **Xuất:** `scene_backbone.onnx` (uint8 → 960), `scene_head.onnx`, `scene_config.json` (fps, size, segment, nhóm, ngưỡng...).
+- **Realtime (`detectors/scene.py`):** chạy ở **luồng nền 2 FPS** (backbone qua **OpenVINO**), giữ 16 vector gần nhất,
+  làm mượt điểm, báo `CẢNH BẤT THƯỜNG: <nhóm>` khi điểm vượt ngưỡng **liên tục ≥ 2 s**, ưu tiên **50**, `ids = []`.
+  Không được làm giảm FPS luồng 1 (đo lại khi bật / tắt).
+- **DB:** mọi sự kiện ghi thêm `scene_score`, `scene_group`, `fight_score` (mục 5.5). `evaluate.py`: bảng so sánh
+  **chỉ luồng 1 / chỉ luồng 2 / kết hợp**.
+- **Cháy/khói bằng YOLO riêng:** việc sau, CHƯA làm.
+
+### 12.2 Dữ liệu
+- UCF-Crime bản **mission-ai** (`BASE=/kaggle/input/datasets/mission-ai/crimeucfdataset`, **bỏ mọi đường dẫn chứa
+  `/anomaly/`**): Part-1 {Abuse, Arrest, Arson, Assault}, Part-2 {Burglary, Explosion, Fighting}, Normal-Videos-Part-1
+  (150 video), 320×240. + NonFight của RWF-2000, NonViolence của RLVS làm mẫu bình thường.
+- Notebook **tự quét mọi dataset trong /kaggle/input**: nhận lớp theo tên thư mục (chuẩn hoá: bỏ hoa thường, dấu câu)
+  hoặc tiền tố tên file; chống trùng theo (nguồn, lớp, tên file), ưu tiên bản chính (RLVS: bỏ bản sao
+  `real life violence situations`). Add Input bản UCF đầy đủ sau này → tự nhận thêm lớp, không sửa code.
+- **Chia:** UCF – video có trong `Temporal_Anomaly_Annotation_for_Testing_Videos.txt` (hoặc `Anomaly_Test.txt`) là
+  **test**, còn lại train (không có file → tạm chia 80/20 theo hash, KHÔNG tính được AUC mức frame);
+  RWF – thư mục train/val; RLVS – theo `meta.csv` của `01_extract_pose` (khớp ≥ 90%), không có thì 80/20
+  stratified `random_state=42`. `val` của RWF/RLVS gọi chung là `test`.
+- Chú thích thời gian: frame ở FPS gốc, `-1` = không có (`shared/scene.py::parse_temporal_annotation`, `frame_labels`).
+
+### 12.3 Notebook 04 – `kaggle/04_scene_features.ipynb` (sinh bởi `tools/build_scene_notebooks.py`)
+- Ô đầu chép nguyên văn `shared/sampling.py`, `shared/scene.py`, mục `scene` của config.
+- Giới hạn **15 phút/video**; GPU (fp16) cho backbone, worker CPU giải mã (chỉ `retrieve` frame được lấy mẫu).
+- **Chạy tiếp được:** mỗi video xong ghi `scene_feats/<key>.npy` (float16, N × 960, ghi file tạm rồi đổi tên) + 1 dòng
+  `scene_feats/_index.csv`; chạy lại bỏ qua video đã xong; Add Input output lần trước → tự chép sang; dừng an toàn sau
+  `MAX_HOURS = 11`.
+- `QUICK = True`: 4 video / (lớp, split), 2 phút đầu mỗi video.
+- Thời điểm frame mẫu thứ i **không lưu** mà tính lại: `sampling.sample_indices([j / fps for j in range(n_read)], 2)`.
+- Đầu ra: `scene_feats/`, `scene_meta.csv` (key, nguồn, lớp, nhóm, train_use, split, đường dẫn, fps, n_read, n_feats...),
+  `ucf_annotation.csv`, `scene_inventory.csv` (số video / phút theo lớp, nhóm, split).
