@@ -34,6 +34,8 @@ def test_detect_class():
         "u/UCF_Crimes/Videos/Testing_Normal_Videos_Anomaly/Normal_Videos_003_x264.mp4": "Normal",
         "u/Videos/Road_Accidents/RoadAccidents001_x264.mp4": "RoadAccidents",          # thư mục có dấu "_"
         "u/flat/Shoplifting010_x264.mp4": "Shoplifting",                                 # chỉ có tiền tố tên file
+        "alirakhmaev/ucf-crime-full/UCF_Crime/RoadAccidents/RoadAccidents150_x264.mp4": "RoadAccidents",
+        "alirakhmaev/ucf-crime-full/UCF_Crime/Normal_Videos_for_Event_Recognition/Normal_Videos_015_x264.mp4": "Normal",
         "r/RWF-2000/train/Fight/a_0.avi": "Fight",
         "r/RWF-2000/val/NonFight/b_0.avi": "NonFight",
         "l/real-life-violence-situations-dataset/Real Life Violence Dataset/NonViolence/NV_1.mp4": "NonViolence",

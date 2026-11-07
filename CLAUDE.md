@@ -141,8 +141,9 @@ Lệnh chạy (từ thư mục `httm`): `python realtime/main.py [nguồn]` – 
 - Unit test: `realtime/tests/test_*.py` (features, fight, pose_rules, body_rules, recorder, evaluate).
 
 **Đang làm – LUỒNG 2 (mục 12, quyết định 2026-11-08):** đã có `shared/scene.py`, mục `scene` trong config,
-`kaggle/04_scene_features.ipynb` (chạy thử trên máy bằng dữ liệu giả: quét, chống trùng, chia split, trích, chạy tiếp
-đều đúng); chờ người dùng chạy QUICK trên Kaggle. Notebook 03 trích khung xương UCF: **tạm dừng / không làm**.
+`kaggle/04_scene_features.ipynb` (chạy thử trên máy bằng dữ liệu giả: quét, gộp 2 bản UCF bỏ trùng theo tên file,
+chia split, trích, chạy tiếp, ước tính thời gian đều đúng); chờ người dùng chạy QUICK trên Kaggle. Notebook 05 chưa viết
+(đọc `scene_meta.csv` của 04 nên tự theo split / nhóm / mẫu bình thường của 04). Notebook 03 trích khung xương UCF: **tạm dừng / không làm**.
 
 **Còn lại:**
 - Thử webcam với **2 người thật** (Mốc C): giả vờ đánh nhau → báo đúng cặp, khung đỏ; mẫu âm khó (ôm, đập tay, bắt tay).
@@ -921,14 +922,19 @@ không thể hiện (cướp, cháy nổ, đột nhập/trộm, tai nạn...). H
 - **Cháy/khói bằng YOLO riêng:** việc sau, CHƯA làm.
 
 ### 12.2 Dữ liệu
-- UCF-Crime bản **mission-ai** (`BASE=/kaggle/input/datasets/mission-ai/crimeucfdataset`, **bỏ mọi đường dẫn chứa
-  `/anomaly/`**): Part-1 {Abuse, Arrest, Arson, Assault}, Part-2 {Burglary, Explosion, Fighting}, Normal-Videos-Part-1
-  (150 video), 320×240. + NonFight của RWF-2000, NonViolence của RLVS làm mẫu bình thường.
+- **2 bản UCF-Crime, gộp lại, bỏ trùng theo TÊN FILE** (vd `Abuse001_x264.mp4` có ở cả 2 bản):
+  - `/kaggle/input/datasets/alirakhmaev/ucf-crime-full`: đủ **13 lớp bất thường** (Abuse 50, Arrest 50, Arson 50,
+    Assault 50, Burglary 100, Explosion 50, Fighting 50, RoadAccidents 150, Robbery 150, Shooting 50, Shoplifting 50,
+    Stealing 100, Vandalism 50 = **950**) + `Normal_Videos_for_Event_Recognition` (50).
+  - `/kaggle/input/datasets/mission-ai/crimeucfdataset` (**bỏ mọi đường dẫn chứa `/anomaly/`** – bản sao): trùng 7 lớp
+    đầu, thêm `Normal-Videos-Part-1` (150) và file **`Temporal_Anomaly_Annotation_for_Testing_Videos.txt`**. 320×240.
+- Bình thường UCF chỉ ~200 video → **BẮT BUỘC** thêm NonFight (RWF-2000) + NonViolence (RLVS) làm mẫu bình thường
+  (notebook dừng nếu thiếu; in tỉ lệ bất thường : bình thường của tập train theo số video và số phút).
 - Notebook **tự quét mọi dataset trong /kaggle/input**: nhận lớp theo tên thư mục (chuẩn hoá: bỏ hoa thường, dấu câu)
   hoặc tiền tố tên file; chống trùng theo (nguồn, lớp, tên file), ưu tiên bản chính (RLVS: bỏ bản sao
   `real life violence situations`). Add Input bản UCF đầy đủ sau này → tự nhận thêm lớp, không sửa code.
-- **Chia:** UCF – video có trong `Temporal_Anomaly_Annotation_for_Testing_Videos.txt` (hoặc `Anomaly_Test.txt`) là
-  **test**, còn lại train (không có file → tạm chia 80/20 theo hash, KHÔNG tính được AUC mức frame);
+- **Chia:** UCF (cả 13 lớp + Normal) – video có trong `Temporal_Anomaly_Annotation_for_Testing_Videos.txt`
+  (hoặc `Anomaly_Test.txt`) là **test**, còn lại train; in số video test theo lớp và video test bị thiếu (không có file → tạm chia 80/20 theo hash, KHÔNG tính được AUC mức frame);
   RWF – thư mục train/val; RLVS – theo `meta.csv` của `01_extract_pose` (khớp ≥ 90%), không có thì 80/20
   stratified `random_state=42`. `val` của RWF/RLVS gọi chung là `test`.
 - Chú thích thời gian: frame ở FPS gốc, `-1` = không có (`shared/scene.py::parse_temporal_annotation`, `frame_labels`).
@@ -939,7 +945,9 @@ không thể hiện (cướp, cháy nổ, đột nhập/trộm, tai nạn...). H
 - **Chạy tiếp được:** mỗi video xong ghi `scene_feats/<key>.npy` (float16, N × 960, ghi file tạm rồi đổi tên) + 1 dòng
   `scene_feats/_index.csv`; chạy lại bỏ qua video đã xong; Add Input output lần trước → tự chép sang; dừng an toàn sau
   `MAX_HOURS = 11`.
-- `QUICK = True`: 4 video / (lớp, split), 2 phút đầu mỗi video.
+- `QUICK = True`: 4 video / (lớp, split), 2 phút đầu mỗi video, ghi riêng vào `scene_feats_quick/` (không dùng để
+  train, không lẫn vào bản đầy đủ). Sau lượt chạy, notebook **ước tính thời gian chạy đầy đủ**: khớp
+  giải mã ≈ a + b × phút video, GPU ≈ giây/frame, hiệu chỉnh bằng thời gian thật của lượt QUICK (thử trên máy: lệch ~30%).
 - Thời điểm frame mẫu thứ i **không lưu** mà tính lại: `sampling.sample_indices([j / fps for j in range(n_read)], 2)`.
 - Đầu ra: `scene_feats/`, `scene_meta.csv` (key, nguồn, lớp, nhóm, train_use, split, đường dẫn, fps, n_read, n_feats...),
   `ucf_annotation.csv`, `scene_inventory.csv` (số video / phút theo lớp, nhóm, split).

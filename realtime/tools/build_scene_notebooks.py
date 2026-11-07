@@ -46,9 +46,11 @@ CELLS_04 = [
 
     Sinh tự động bởi `realtime/tools/build_scene_notebooks.py` – **không sửa tay**, sửa ở repo rồi sinh lại.
 
-    **Chuẩn bị:** Add Input các dataset video (UCF-Crime bản nào cũng được – có thể nhiều bản, RWF-2000, RLVS) ·
-    (nên) Add Input output của `01_extract_pose` để RLVS dùng đúng split cũ · Settings → **GPU T4** · **Internet on**
-    (tải trọng số ImageNet của MobileNetV3).
+    **Chuẩn bị – Add Input:** `alirakhmaev/ucf-crime-full` (13 lớp bất thường + Normal_Videos_for_Event_Recognition) ·
+    `mission-ai/crimeucfdataset` (Normal-Videos-Part-1 + file chú thích thời gian test) · `daniazehra/rwf-2000` ·
+    `mohamedmustafa/real-life-violence-situations-dataset` (NonFight / NonViolence: **bắt buộc**, bù mẫu bình thường) ·
+    output của `01_extract_pose` (để RLVS dùng đúng split cũ). Settings → **GPU T4** · **Internet on**
+    (tải trọng số ImageNet của MobileNetV3). Hai bản UCF trùng nhau được gộp, bỏ trùng theo tên file.
 
     Notebook **tự quét mọi dataset trong /kaggle/input**: nhận lớp theo tên thư mục (hoặc tiền tố tên file), bỏ mọi
     đường dẫn chứa `/anomaly/`, chống trùng theo (nguồn, lớp, tên file). Thêm bản UCF đầy đủ sau này → tự nhận thêm lớp.
@@ -57,7 +59,8 @@ CELLS_04 = [
     *Save Version → Save & Run All*. **Bị ngắt / quá giờ:** Add Input output của chính notebook này rồi chạy lại –
     video đã xong được chép sang, chỉ trích phần còn lại.
 
-    **Đầu ra (/kaggle/working):** `scene_feats/<key>.npy` (float16, N × 960; frame mẫu thứ i ở thời điểm theo
+    **Đầu ra (/kaggle/working):** `scene_feats/<key>.npy` (QUICK ghi riêng vào `scene_feats_quick/`, không dùng để
+    train) (float16, N × 960; frame mẫu thứ i ở thời điểm theo
     `sampling.sample_indices` trên FPS gốc), `scene_feats/_index.csv` (tiến độ), `scene_meta.csv`, `ucf_annotation.csv`,
     `scene_inventory.csv` (số video / phút theo lớp, nhóm).
     """),
@@ -87,7 +90,7 @@ CELLS_04 = [
     INPUT = os.environ.get("HTTM_INPUT", "/kaggle/input")
     WORK = os.environ.get("HTTM_WORK", "/kaggle/working")
     N_WORKERS = int(os.environ.get("HTTM_WORKERS", os.cpu_count() or 2))
-    FEATS = os.path.join(WORK, "scene_feats")
+    FEATS = os.path.join(WORK, "scene_feats_quick" if QUICK else "scene_feats")   # QUICK (2 phút/video) KHÔNG lẫn vào bản đầy đủ
     os.makedirs(FEATS, exist_ok=True)
     sys.path.insert(0, os.getcwd())
     import sampling, scene as S
@@ -109,7 +112,7 @@ CELLS_04 = [
     INDEX = S.class_index(CFG["groups"], CFG["eval_only"])
     cands, skipped, unknown = [], Counter(), []
     for root, dirs, files in os.walk(INPUT):
-        if "scene_feats" in root.replace("\\\\", "/").split("/"):
+        if any(c.startswith("scene_feats") for c in root.replace("\\\\", "/").split("/")):
             continue
         for f in files:
             if os.path.splitext(f)[1].lower() not in S.VIDEO_EXT:
@@ -123,22 +126,40 @@ CELLS_04 = [
                 skipped["khong nhan ra lop"] += 1
                 unknown.append(p)
                 continue
-            cands.append((S.source_of(cls), cls, f.lower(), S.dup_rank(p), p))
+            src = S.source_of(cls)
+            # UCF: trùng theo TÊN FILE giữa mọi bản (vd Abuse001_x264.mp4 có ở cả 2 dataset); RWF/RLVS: theo (lớp, tên)
+            dk = (src, f.lower()) if src == "ucf" else (src, cls, f.lower())
+            cands.append((dk, S.dup_rank(p), p, src, cls))
+
+    def dataset_of(p):
+        \"\"\"Tên dataset trong /kaggle/input (vd datasets/alirakhmaev/ucf-crime-full).\"\"\"
+        parts = os.path.relpath(p, INPUT).replace("\\\\", "/").split("/")
+        return parts[2] if parts[0] in ("datasets", "notebooks", "competitions", "models") and len(parts) > 3 else parts[0]
+
     cands.sort()
-    rows, seen, dups = [], set(), Counter()
-    for src, cls, fname, rank, p in cands:
-        if (src, cls, fname) in seen:
-            dups[src] += 1
+    rows, kept, dup_rows, conflict = [], {}, [], 0
+    for dk, rank, p, src, cls in cands:
+        if dk in kept:
+            dup_rows.append(dict(dataset=dataset_of(p), cls=cls))
+            conflict += kept[dk] != cls
             continue
-        seen.add((src, cls, fname))
+        kept[dk] = cls
         c, g, train_use = INDEX[S.norm(cls)]
-        rows.append(dict(key=S.video_key(src, c, p), source=src, cls=c, group=g, train_use=train_use, path=p))
+        rows.append(dict(key=S.video_key(src, c, p), source=src, cls=c, group=g, train_use=train_use, path=p,
+                         dataset=dataset_of(p)))
     vids = pd.DataFrame(rows)
     assert len(vids), "Khong tim thay video nao trong /kaggle/input -> Add Input cac dataset video"
     assert vids.key.is_unique, "Trung key: " + str(vids.key[vids.key.duplicated()].head().tolist())
-    print(f"Tim thay {len(cands)} video hop le, bo {sum(dups.values())} ban trung {dict(dups)}, bo khac: {dict(skipped)}")
+    print(f"Tim thay {len(cands)} video hop le -> giu {len(vids)}, bo {len(dup_rows)} ban trung | bo khac: {dict(skipped)}")
+    if conflict:
+        print(f"!! {conflict} file trung ten nhung 2 ban xep vao 2 lop khac nhau (giu lop cua ban dau tien)")
     if unknown:
         print("Vi du khong nhan ra lop:", unknown[:5])
+    contrib = vids.groupby(["dataset", "cls"]).size().rename("giu").to_frame()
+    if dup_rows:
+        contrib = contrib.join(pd.DataFrame(dup_rows).groupby(["dataset", "cls"]).size().rename("bo_vi_trung"), how="outer")
+    print("== Moi dataset gop bao nhieu video (sau khi bo trung theo ten file)")
+    display(contrib.fillna(0).astype(int).unstack("dataset", fill_value=0))
     missing = [c for g, cl in CFG["groups"].items() for c in cl if c not in set(vids.cls)]
     print("Lop co trong config nhung KHONG co trong du lieu (tu bo qua):", missing)
     """),
@@ -236,6 +257,16 @@ CELLS_04 = [
         t = vids[ucf & (vids.split == "test")]
         print(f"UCF test co trong du lieu: {len(t)} video ({t.cls.ne('Normal').sum()} bat thuong, "
               f"{t.cls.eq('Normal').sum()} binh thuong) / {len(ANN)} video trong file chu thich")
+        ann_cls = pd.Series({k: S.detect_class(k, INDEX) or c for k, (c, _) in ANN.items()})
+        per = pd.DataFrame({"trong_file_chu_thich": ann_cls.value_counts(),
+                            "test_co_trong_du_lieu": t.cls.value_counts(),
+                            "train": vids[ucf & (vids.split == "train")].cls.value_counts()}).fillna(0).astype(int)
+        per["thieu_video_test"] = per.trong_file_chu_thich - per.test_co_trong_du_lieu
+        print("== UCF: so video test / train theo lop (test = co trong file chu thich thoi gian)")
+        display(per.sort_index())
+        if per.thieu_video_test.gt(0).any():
+            print("!! Thieu video test (co trong file chu thich nhung khong co trong du lieu):",
+                  per.thieu_video_test[per.thieu_video_test > 0].to_dict())
         if not t.cls.eq("Normal").any():
             print("  (chua co video Normal cua tap test -> AUC muc frame chi tinh tren cac video bat thuong)")
     """),
@@ -255,6 +286,23 @@ CELLS_04 = [
     print(f"TONG: {len(vids)} video, {vids.minutes.sum() / 60:.1f} gio "
           f"(sau khi lay mau ~{vids.minutes.sum() * 60 * S.FPS / 1e6:.2f} trieu frame)")
     inv.to_csv(os.path.join(WORK, "scene_inventory.csv"), index=False)
+
+    # Bình thường UCF chỉ ~200 video -> BẮT BUỘC thêm NonFight (RWF-2000) + NonViolence (RLVS) làm mẫu bình thường
+    extra = [c for c in ("NonFight", "NonViolence") if not (vids.cls == c).any()]
+    assert not extra, (f"Thieu mau binh thuong {extra} -> Add Input RWF-2000 (daniazehra/rwf-2000) va "
+                       "RLVS (mohamedmustafa/real-life-violence-situations-dataset) roi chay lai")
+    tr = vids[(vids.split == "train") & vids.train_use]
+    is_norm = tr.group == CFG["normal_group"]
+    ratio = (tr.assign(loai=np.where(is_norm, "binh thuong", "bat thuong"))
+               .groupby(["loai", "source", "cls"]).agg(so_video=("key", "size"), so_phut=("minutes", "sum")).round(1))
+    print("== TAP TRAIN: bat thuong / binh thuong (chi tinh lop dung de train)")
+    display(ratio)
+    nv, av = is_norm.sum(), (~is_norm).sum()
+    nm, am = tr.minutes[is_norm].sum(), tr.minutes[~is_norm].sum()
+    print(f"Ti le bat thuong : binh thuong = {av} : {nv} video ({av / max(nv, 1):.2f}) | "
+          f"{am:.0f} : {nm:.0f} phut ({am / max(nm, 1e-9):.2f})")
+    print(f"  binh thuong gom: UCF {(is_norm & (tr.source == 'ucf')).sum()} video, "
+          f"RWF NonFight {(tr.cls == 'NonFight').sum()}, RLVS NonViolence {(tr.cls == 'NonViolence').sum()}")
 
     if QUICK:
         plan = (vids.groupby(["cls", "split"], group_keys=False)
@@ -344,6 +392,7 @@ CELLS_04 = [
     dl = torch.utils.data.DataLoader(VideoFrames(todo, MAX_SEC), batch_size=None, shuffle=False,
                                      num_workers=N_WORKERS if N_WORKERS > 1 else 0,
                                      prefetch_factor=1 if N_WORKERS > 1 else None)
+    STATS = []                                  # đo từng video (để ước tính thời gian chạy đầy đủ)
     t_start, last_print, n_ok, n_err, n_frames = time.time(), 0.0, 0, 0, 0
     with open(INDEX_CSV, "a", newline="") as fidx:
         for k_i, item in enumerate(dl):
@@ -355,12 +404,14 @@ CELLS_04 = [
             elif len(frames) == 0:
                 status = "loi: khong doc duoc frame nao"
             if status == "ok":
-                feats = []
+                feats, t_gpu = [], time.time()
                 with torch.no_grad(), torch.autocast("cuda", dtype=torch.float16, enabled=DEVICE == "cuda"):
                     for c in range(0, len(frames), BATCH):
                         x = torch.from_numpy(frames[c:c + BATCH]).to(DEVICE, non_blocking=True)
                         feats.append(backbone(x).float().cpu())
                 f = torch.cat(feats).numpy().astype(np.float16)
+                STATS.append(dict(key=key, minutes=int(item["n_read"]) / float(item["fps"]) / 60, frames=len(f),
+                                  decode_s=float(item["sec"]), gpu_s=time.time() - t_gpu))
                 tmp = os.path.join(FEATS, key + ".tmp")
                 with open(tmp, "wb") as fh:
                     np.save(fh, f)
@@ -383,7 +434,44 @@ CELLS_04 = [
                 print(f"!! Da chay {MAX_HOURS} h -> dung an toan. Save Version, Add Input output nay roi chay lai de lam tiep.")
                 break
     del dl
-    print(f"Xong luot nay: {n_ok} video ok, {n_err} loi, {n_frames} frame, {(time.time() - t_start) / 60:.1f} phut")
+    WALL = time.time() - t_start
+    print(f"Xong luot nay: {n_ok} video ok, {n_err} loi, {n_frames} frame, {WALL / 60:.1f} phut")
+    """),
+    md("""
+    ### Ước tính thời gian chạy ĐẦY ĐỦ (từ số đo của lượt vừa chạy – đọc kỹ khi `QUICK = True`)
+    Giải mã mỗi video ≈ a + b × số phút (khớp tuyến tính trên các video vừa trích, worker CPU chạy song song);
+    GPU ≈ (giây / frame) × số frame. Thời gian thật ≈ max(giải mã / số worker, GPU), hiệu chỉnh bằng tỉ lệ
+    thời gian thật / dự đoán của chính lượt vừa chạy. Áp cho TOÀN BỘ video (giới hạn 15 phút/video).
+    """),
+    code("""
+    st = pd.DataFrame(STATS)
+    if len(st) < 5:
+        print("Chua du so lieu de uoc tinh (can >= 5 video vua trich trong luot nay).")
+    else:
+        b, a = np.polyfit(st.minutes, st.decode_s, 1) if st.minutes.nunique() > 1 else (st.decode_s.sum() / st.minutes.sum(), 0)
+        a, b = max(a, 0.0), max(b, 0.0)
+        gpu_per_frame = st.gpu_s.sum() / max(st.frames.sum(), 1)
+        workers = max(N_WORKERS, 1)
+
+        def predict(minutes):
+            m = np.asarray(minutes, float)
+            return max((a + b * m).sum() / workers, gpu_per_frame * (m * 60 * S.FPS).sum())
+
+        calib = WALL / max(predict(st.minutes), 1e-6)
+        full_min = np.minimum(vids.dur_s, S.MAX_SEC) / 60
+        rest = np.ones(len(vids), bool) if QUICK else ~vids.key.isin(done | set(st.key)).values   # QUICK: phải trích lại hết
+        todo_min = full_min[rest]
+        est = predict(todo_min) * calib
+        print(f"Do tren {len(st)} video ({st.minutes.sum():.1f} phut video, {st.frames.sum()} frame), thuc te {WALL:.0f} s:")
+        print(f"  giai ma: {a:.2f} s/video + {b:.2f} s/phut video (1 worker) | GPU: {gpu_per_frame * 1000:.2f} ms/frame "
+              f"| hieu chinh x{calib:.2f}")
+        print(f"  -> Con {len(todo_min)} video, {todo_min.sum() / 60:.1f} gio video ({todo_min.sum() * 60 * S.FPS / 1e6:.2f} trieu frame)")
+        by = vids[rest].assign(m=todo_min).groupby("source").m
+        for src, m in by:
+            print(f"     {src:5s}: {len(m):5d} video, {m.sum() / 60:6.1f} gio video -> ~{predict(m) * calib / 60:7.1f} phut")
+        print(f"  -> UOC TINH chay day du: ~{est / 60:.1f} phut ({est / 3600:.1f} gio)", end="")
+        sessions = int(np.ceil(est / 3600 / MAX_HOURS))
+        print(f" -> {'vua 1 phien Kaggle' if sessions <= 1 else f'can ~{sessions} phien (Add Input output de chay tiep)'}")
     """),
     md("## 8. Tổng hợp `scene_meta.csv` + kiểm tra"),
     code("""
