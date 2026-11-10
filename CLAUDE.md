@@ -964,8 +964,7 @@ không thể hiện (cướp, cháy nổ, đột nhập/trộm, tai nạn...). H
 ### 12.4 Notebook 05 – `kaggle/05_scene_train.ipynb` (CHƯA có trong repo – yêu cầu đã chốt 2026-11-10)
 - **Protocol chuẩn UCF-Crime** (train/test theo danh sách chính thức từ `scene_meta.csv` của 04); có Normal UCF trong
   train nên **bỏ chế độ chia 75/75**.
-- **Bag kiểu Sultani:** mỗi video chia **32 đoạn** theo thời gian, đặc trưng đoạn = trung bình các frame trong đoạn
-  (**không đệm 0**; video ngắn hơn 32 frame mẫu thì các đoạn dùng chung frame).
+- **Cửa sổ 16 frame (khớp realtime):** cắt `scene_feats/<key>.npy` (2 FPS, ~8 s/cửa sổ), bước 8. Video ngắn hơn 16 frame: lặp frame theo lưới đều, **không đệm 0**, đánh dấu `short_clip` (chỉ thống kê). Bag kiểu Sultani = 8 cửa sổ trải đều của một video; ranking loss trên điểm cửa sổ; head nhóm chỉ trên bất thường. Lấy mẫu video theo `train_w`.
 - **Giữ:** chẩn đoán **lối tắt nguồn dữ liệu** (mô hình phân biệt nguồn UCF / RWF / RLVS thay vì bất thường), báo
   **độ chính xác theo nhóm**.
 - **2 thí nghiệm để so sánh:** (a) UCF + NonFight/NonViolence làm mẫu bình thường bổ sung; (b) **chỉ UCF**.

@@ -1,11 +1,10 @@
-"""Sinh kaggle/05_scene_train.ipynb – huấn luyện LUỒNG 2 (CLAUDE.md mục 12.4).
+"""Sinh kaggle/05_scene_train.ipynb – huấn luyện LUỒNG 2 trên CỬA SỔ 16 frame (CLAUDE.md mục 12.4).
 
-Đọc output của notebook 04 (Add Input): scene_seg32/ (32 đoạn × 960 cho mỗi video), scene_meta.csv,
-ucf_annotation.csv. Train MIL kiểu Sultani (ranking loss) + head phân nhóm (5 nhóm bất thường, chỉ học trên
-video bất thường). Xuất scene_head.onnx, scene_backbone.onnx, scene_config.json.
+Đọc output của notebook 04 (Add Input): scene_feats/<key>.npy (N × 960, 2 FPS), scene_meta.csv, ucf_annotation.csv.
+Cửa sổ 16 frame (~8 s), bước 8 – đúng kích thước realtime chấm điểm. Ranking loss kiểu Sultani trên điểm cửa sổ,
+head nhóm chỉ học trên cửa sổ bất thường. Xuất scene_head.onnx (input 16 × 960), scene_backbone.onnx, scene_config.json.
 Chạy (từ thư mục httm):  python realtime/tools/build_scene_train.py
 """
-import json
 import sys
 from pathlib import Path
 
@@ -17,17 +16,16 @@ OUT_05 = ROOT / "kaggle" / "05_scene_train.ipynb"
 
 CELLS_05 = [
     md("""
-    # 05 – Huấn luyện LUỒNG 2: MIL kiểu Sultani + head phân nhóm (UCF-Crime)
+    # 05 – Huấn luyện LUỒNG 2 trên cửa sổ 16 frame (khớp realtime)
 
     Sinh tự động bởi `realtime/tools/build_scene_train.py` – **không sửa tay**.
 
-    **Chuẩn bị – Add Input:** output của notebook **04_scene_features** (có `scene_seg32/`, `scene_meta.csv`,
-    `ucf_annotation.csv`). Settings → **GPU T4** · **Internet on** (chỉ để cài `onnx` và tải trọng số MobileNetV3 khi xuất
-    `scene_backbone.onnx`).
+    **Chuẩn bị – Add Input:** output của notebook **04_scene_features** bản **đầy đủ** (có `scene_feats/`,
+    `scene_meta.csv`, `ucf_annotation.csv`). Settings → **GPU T4** · **Internet on** (cài `onnx`, tải MobileNetV3 để xuất backbone).
 
-    **Dữ liệu:** train bất thường = UCF (810 video) · train bình thường = RWF NonFight + RLVS NonViolence (~1600) ·
-    test = UCF bất thường (140) · Normal UCF (150, **ngoài miền**) · RWF / RLVS val (Fight / Violence chỉ đánh giá).
-    Lấy mẫu cân bằng theo `train_w` (theo phút). Không đệm 0: mỗi video đã là 32 đoạn cố định.
+    **Cửa sổ:** 16 frame mẫu 2 FPS (~8 s), bước 8. Video ngắn hơn 16 frame: lặp frame theo lưới đều, KHÔNG đệm 0,
+    đánh dấu `short_clip` (chỉ để thống kê, không đưa vào mô hình).
+    **Lấy mẫu:** chọn video theo `train_w` (cân bằng theo phút), rồi chọn cửa sổ trong video.
 
     **Chạy:** `QUICK = True` thử → ổn thì `QUICK = False` (Save & Run All).
     """),
@@ -47,8 +45,10 @@ CELLS_05 = [
     import os
     QUICK = True              # True: thu nhanh. Ok roi doi False de chay day du.
     QUICK_EPOCHS, QUICK_STEPS = 2, 20
-    EPOCHS, STEPS = 20, 200
+    EPOCHS, STEPS = 20, 300
     BAG = 8                   # moi buoc: BAG video bat thuong + BAG video binh thuong
+    BAGW = 8                  # moi video trong buoc: 8 cua so 16 frame (chuoi trai deu theo thoi gian)
+    WIN, STRIDE = 16, 8
     LR, WD = 1e-3, 1e-4
     SEED = 42
     EXPORT_BACKBONE = True    # xuat scene_backbone.onnx (can Internet de tai trong so ImageNet)
@@ -56,7 +56,7 @@ CELLS_05 = [
     WORK = os.environ.get("HTTM_WORK", "/kaggle/working")
     os.makedirs(WORK, exist_ok=True)
 
-    import os, sys, glob, json, time, importlib, shutil
+    import sys, glob, json, time, importlib
     import numpy as np
     import pandas as pd
     import torch
@@ -74,26 +74,29 @@ CELLS_05 = [
     rng = np.random.default_rng(SEED)
     DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
     print("torch", torch.__version__, "| device:", DEVICE)
-    print(f"QUICK = {QUICK} | MAX_SEC (15 phut khi chay day du) = {S.MAX_SEC} s")
+    print(f"QUICK = {QUICK} | MAX_SEC (15 phut khi chay day du) = {S.MAX_SEC} s | cua so {WIN} frame, buoc {STRIDE}")
     """),
-    md("## 3. Dữ liệu từ notebook 04"),
+    md("## 3. Dữ liệu từ notebook 04 (đặc trưng theo từng frame)"),
     code("""
-    seg_dirs = sorted(d for d in glob.glob(os.path.join(INPUT, "**", "scene_seg32*"), recursive=True) if os.path.isdir(d))
-    assert seg_dirs, "Khong thay scene_seg32/ -> Add Input output cua notebook 04_scene_features"
-    full = [d for d in seg_dirs if os.path.basename(d) == "scene_seg32"]
-    SEG = (full or seg_dirs)[0]
-    print("Doan 32:", SEG, "| cac thu muc tim thay:", seg_dirs)
-    META = os.path.join(os.path.dirname(SEG), "scene_meta.csv")
+    feat_dirs = sorted(d for d in glob.glob(os.path.join(INPUT, "**", "scene_feats*"), recursive=True) if os.path.isdir(d))
+    assert feat_dirs, "Khong thay scene_feats/ -> Add Input output cua notebook 04_scene_features"
+    full = [d for d in feat_dirs if os.path.basename(d) == "scene_feats"]
+    FE_DIR = (full or feat_dirs)[0]
+    print("Dac trung theo frame:", FE_DIR, "| tim thay:", [os.path.basename(d) for d in feat_dirs])
+    META = os.path.join(os.path.dirname(FE_DIR), "scene_meta.csv")
     if not os.path.exists(META):
         META = glob.glob(os.path.join(INPUT, "**", "scene_meta.csv"), recursive=True)[0]
     ANN_F = (glob.glob(os.path.join(INPUT, "**", "ucf_annotation.csv"), recursive=True) or [None])[0]
     meta = pd.read_csv(META)
-    meta = meta[meta.key.map(lambda k: os.path.exists(os.path.join(SEG, k + ".npy")))].reset_index(drop=True)
+    meta = meta[meta.key.map(lambda k: os.path.exists(os.path.join(FE_DIR, k + ".npy")))].reset_index(drop=True)
     meta["ab"] = meta.group != NORMAL
     meta["gi"] = meta.group.map({g: i for i, g in enumerate(ABN_GROUPS)}).fillna(-1).astype(int)
     meta["dur_used"] = np.minimum(meta.n_read / meta.fps, S.MAX_SEC)
-    print(f"{len(meta)} video co doan 32 | meta: {META}")
-    print("Thoi luong trung binh (giay) theo nhom:", meta.groupby(["ab", "split"]).dur_used.mean().round(1).to_dict())
+    FE = {r: np.load(os.path.join(FE_DIR, k + ".npy")) for r, k in enumerate(meta.key)}
+    meta["n_feat"] = [len(FE[r]) for r in range(len(meta))]
+    WSTART = {r: S.segments(len(FE[r]), segment=WIN, stride=STRIDE) for r in range(len(meta))}
+    print(f"{len(meta)} video | {sum(len(v) for v in WSTART.values())} cua so 16 frame | {meta.n_feat.sum()} frame")
+    print("Thoi luong TB (giay):", meta.groupby(["ab", "split"]).dur_used.mean().round(1).to_dict())
     """),
     code("""
     TR_AB = meta.index[(meta.split == "train") & meta.ab & meta.train_use].values
@@ -107,42 +110,61 @@ CELLS_05 = [
                      "test bat thuong UCF": len(TE_UCF_AB), "test Normal UCF (ngoai mien)": len(TE_UCF_NO),
                      "test RWF (Fight + NonFight)": len(TE_RWF), "test RLVS (Violence + NonViolence)": len(TE_RLVS)}))
     print("Ky vong: 810 | 1600 | 140 | 150 | - | -   (QUICK chi co mot phan)")
-    print("Nhan nhom tren tap train bat thuong:", meta.loc[TR_AB].group.value_counts().to_dict())
+    print("Nhom tren tap train bat thuong:", meta.loc[TR_AB].group.value_counts().to_dict())
     """),
-    md("## 4. Chuẩn hoá đặc trưng (thống kê trên các đoạn train)"),
+    md("## 4. Chuẩn hoá và cửa sổ"),
     code("""
-    XS = np.stack([np.load(os.path.join(SEG, k + ".npy")) for k in meta.key])        # (N, 32, 960) float16
-    print("XS", XS.shape, XS.dtype, f"{XS.nbytes / 1e9:.2f} GB")
-    tr_idx = np.r_[TR_AB, TR_NO]
-    samp = XS[tr_idx].reshape(-1, 960)
-    samp = samp[rng.choice(len(samp), min(len(samp), 20000), replace=False)].astype(np.float32)
+    samp = np.concatenate([FE[r] for r in np.r_[TR_AB, TR_NO]])
+    samp = samp[rng.choice(len(samp), min(len(samp), 50000), replace=False)].astype(np.float32)
     MU, SD = samp.mean(0), np.maximum(samp.std(0), 1e-3)
 
-    def norm(x):
-        return (x.astype(np.float32) - MU) / SD
+    def nrm(x):
+        return (np.asarray(x, np.float32) - MU) / SD
+
+    def win_x(r, s):
+        \"\"\"Cua so 16 frame bat dau tai s. Video < 16 frame: lap frame theo luoi deu (khong dem 0).\"\"\"
+        f = FE[r]
+        if len(f) >= WIN:
+            return f[s:s + WIN]
+        return f[np.linspace(0, len(f) - 1, WIN).round().astype(int)]
+
+    def short_of(r):
+        return len(FE[r]) < WIN
+
+    def bag_x(r):
+        \"\"\"BAGW cua so trai deu theo thoi gian cua 1 video (lap chi so neu video co it cua so).\"\"\"
+        st = WSTART[r]
+        pick = np.linspace(0, len(st) - 1, BAGW).round().astype(int)
+        return np.stack([win_x(r, st[p]) for p in pick])
 
     def wts(idx):
         w = np.maximum(meta.train_w.values[idx].astype(float), 1e-9)
-        return w / w.sum()                                       # lay mau ti le train_w (can bang theo phut)
+        return w / w.sum()                                      # can bang theo phut (train_w)
     """),
     md("""
-    ## 5. Mô hình và huấn luyện (MIL kiểu Sultani)
-    Điểm đoạn `s_i` (32 đoạn / video). **Ranking loss:** `max(0, 1 − max_i s_abn + max_j s_nor)` + làm mượt theo thời gian
-    + thưa (`s_abn` nhỏ). **Head nhóm:** logit 5 nhóm cấp video, **chỉ học trên video bất thường**.
+    ## 5. Mô hình và huấn luyện (MIL kiểu Sultani trên cửa sổ)
+    Mỗi cửa sổ: encoder theo từng frame → trung bình 16 frame → điểm `s` và logit nhóm.
+    **Ranking loss:** `max(0, 1 − max s_bất_thường + max s_bình_thường)` trên 8 cửa sổ mỗi video, + làm mượt (`s` cạnh nhau)
+    + thưa (`s` bất thường nhỏ). **Head nhóm:** cross-entropy, chỉ trên video bất thường.
     """),
     code("""
-    class SceneHead(nn.Module):
+    class WinHead(nn.Module):
         def __init__(self, d=960, h=128, p=0.3, n_groups=len(ABN_GROUPS)):
             super().__init__()
             self.enc = nn.Sequential(nn.Dropout(p), nn.Linear(d, h), nn.ReLU(), nn.Dropout(p))
             self.score = nn.Linear(h, 1)
             self.group = nn.Linear(h, n_groups)
 
-        def forward(self, x):                                    # (B, 32, 960) -> diem doan (B, 32), logit nhom (B, 5)
-            h = self.enc(x)
-            return self.score(h).squeeze(-1), self.group(h.mean(1))
+        def win(self, x):                                       # (B, 16, 960) -> diem (B,), logit nhom (B, 5)
+            h = self.enc(x).mean(1)
+            return self.score(h).squeeze(-1), self.group(h)
 
-    model = SceneHead().to(DEVICE)
+        def bag(self, x):                                       # (B, K, 16, 960) -> diem (B, K), logit nhom (B, 5)
+            B, K = x.shape[:2]
+            s, g = self.win(x.reshape(B * K, x.shape[2], x.shape[3]))
+            return s.view(B, K), g.view(B, K, -1).mean(1)
+
+    model = WinHead().to(DEVICE)
     opt = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=WD)
     n_ep, n_st = (QUICK_EPOCHS, QUICK_STEPS) if QUICK else (EPOCHS, STEPS)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=n_ep * n_st)
@@ -154,47 +176,50 @@ CELLS_05 = [
         for _ in range(n_st):
             a = rng.choice(TR_AB, BAG, p=wts(TR_AB))
             n = rng.choice(TR_NO, BAG, p=wts(TR_NO))
-            sa, ga = model(torch.from_numpy(norm(XS[a])).to(DEVICE))
-            sn, _ = model(torch.from_numpy(norm(XS[n])).to(DEVICE))
+            xa = torch.from_numpy(nrm(np.stack([bag_x(r) for r in a]))).to(DEVICE)
+            xn = torch.from_numpy(nrm(np.stack([bag_x(r) for r in n]))).to(DEVICE)
+            sa, ga = model.bag(xa)
+            sn, _ = model.bag(xn)
             hinge = torch.relu(1 - sa.max(1).values + sn.max(1).values).mean()
             smooth = ((sa[:, 1:] - sa[:, :-1]) ** 2).sum(1).mean()
             sparse = sa.abs().sum(1).mean()
             gi = torch.tensor(meta.gi.values[a], device=DEVICE)
-            loss = hinge + 8e-5 * smooth + 8e-5 * sparse + ce(ga, gi)     # ga: chi bag bat thuong
+            keep = gi >= 0
+            cls_loss = ce(ga[keep], gi[keep]) if keep.any() else torch.zeros((), device=DEVICE)
+            loss = hinge + 8e-5 * smooth + 8e-5 * sparse + cls_loss
             opt.zero_grad(); loss.backward(); opt.step(); sched.step()
-            tot.append([loss.item(), hinge.item()])
+            tot.append([loss.item(), hinge.item(), cls_loss.item()])
         m = np.mean(tot, 0)
-        print(f"epoch {ep + 1}/{n_ep} | loss {m[0]:.4f} | ranking {m[1]:.4f} | {time.time() - t0:.0f} s")
+        print(f"epoch {ep + 1}/{n_ep} | loss {m[0]:.4f} | ranking {m[1]:.4f} | nhom {m[2]:.4f} | {time.time() - t0:.0f} s")
     """),
-    md("## 6. Đánh giá"),
+    md("## 6. Đánh giá (điểm video = cửa sổ lớn nhất; mọi cửa sổ của video)"),
     code("""
     @torch.no_grad()
-    def scores(idx):
+    def video_scores(r):
         model.eval()
-        S_, G_ = [], []
-        for c in range(0, len(idx), 128):
-            s, g = model(torch.from_numpy(norm(XS[idx[c:c + 128]])).to(DEVICE))
-            S_.append(s.cpu().numpy()); G_.append(g.cpu().numpy())
-        return np.concatenate(S_), np.concatenate(G_)
+        xs = torch.from_numpy(nrm(np.stack([win_x(r, s) for s in WSTART[r]]))).to(DEVICE)
+        s, g = model.win(xs)
+        return s.cpu().numpy(), g.cpu().numpy()
+
+    VS = {int(r): video_scores(int(r)) for r in np.unique(np.r_[TR_NO, TE_UCF_AB, TE_UCF_NO, TE_RWF, TE_RLVS])}
+    vmax = {r: VS[r][0].max() for r in VS}
+    vgroup = {r: VS[r][1].mean(0) for r in VS}
 
     def auc(y, s):
         return float(roc_auc_score(y, s)) if len(set(y)) == 2 else float("nan")
 
-    s_tr_no = scores(TR_NO)[0].max(1)
-    THR = float(np.percentile(s_tr_no, 95))          # nguong: 95% diem video binh thuong train
-    print(f"Nguong (95% diem binh thuong train) = {THR:.3f}")
+    THR = float(np.percentile([vmax[r] for r in TR_NO], 95))    # nguong: 95% phan vi binh thuong train
+    print(f"Nguong (95% phan vi binh thuong train) = {THR:.3f}")
 
     rows = []
-    for name, ab_idx, no_idx in [("UCF test (ngoai mien Normal)", TE_UCF_AB, TE_UCF_NO),
-                                 ("RWF test (Fight vs NonFight)", TE_RWF[meta.ab.values[TE_RWF]],
-                                  TE_RWF[~meta.ab.values[TE_RWF]]),
+    for name, ab_idx, no_idx in [("UCF test (bat thuong vs Normal ngoai mien)", TE_UCF_AB, TE_UCF_NO),
+                                 ("RWF test (Fight vs NonFight)", TE_RWF[meta.ab.values[TE_RWF]], TE_RWF[~meta.ab.values[TE_RWF]]),
                                  ("RLVS test (Violence vs NonViolence)", TE_RLVS[meta.ab.values[TE_RLVS]],
                                   TE_RLVS[~meta.ab.values[TE_RLVS]])]:
-        idx = np.r_[ab_idx, no_idx]
-        if len(idx) == 0:
+        if len(ab_idx) + len(no_idx) == 0:
             continue
         y = np.r_[np.ones(len(ab_idx)), np.zeros(len(no_idx))].astype(int)
-        sc = scores(idx)[0].max(1)
+        sc = np.array([vmax[r] for r in np.r_[ab_idx, no_idx]])
         pred = (sc > THR).astype(int)
         rows.append(dict(tap=name, n_bat_thuong=len(ab_idx), n_binh_thuong=len(no_idx), AUC=auc(y, sc),
                          F1=f1_score(y, pred, zero_division=0),
@@ -203,66 +228,75 @@ CELLS_05 = [
     print("== AUC / F1 theo tung tap test (nguong 95% binh thuong train)")
     display(res.round(3))
     if len(TE_UCF_NO):
-        fp = float((scores(TE_UCF_NO)[0].max(1) > THR).mean())
+        fp = float(np.mean([vmax[r] > THR for r in TE_UCF_NO]))
         print(f"TY LE BAO NHAM tren {len(TE_UCF_NO)} Normal UCF (ngoai mien): {fp:.1%}")
 
-    # AUC muc doan (~ muc frame) tren UCF test theo chu thich thoi gian
+    # AUC muc cua so (~frame) tren UCF test theo chu thich thoi gian
     spans = {}
     if ANN_F:
         ann = pd.read_csv(ANN_F)
         for _, r in ann.iterrows():
-            sp = [(int(r[a]), int(r[b])) for a, b in (("s1", "e1"), ("s2", "e2")) if r[a] >= 0 and r[b] >= 0]
-            spans[str(r.fname).lower()] = sp
-    idx_fr = np.r_[TE_UCF_AB, TE_UCF_NO]
+            spans[str(r.fname).lower()] = [(int(r[a]), int(r[b])) for a, b in (("s1", "e1"), ("s2", "e2"))
+                                           if r[a] >= 0 and r[b] >= 0]
     fr_y, fr_s = [], []
-    s_all = scores(idx_fr)[0]
-    for j, i in enumerate(idx_fr):
-        t = (np.arange(32) + 0.5) / 32 * meta.dur_used.values[i]
-        sp = spans.get(str(meta.fname.values[i]).lower(), [])
-        fr_y.append(S.frame_labels(t, float(meta.fps.values[i]), sp) if sp else np.zeros(32, np.int8))
-        fr_s.append(s_all[j])
-    fr_y, fr_s = np.concatenate(fr_y), np.concatenate(fr_s)
-    print(f"AUC MUC DOAN (~frame) tren UCF test: {auc(fr_y, fr_s):.3f} | doan duong: {int(fr_y.sum())} / {len(fr_y)}")
+    for r in np.r_[TE_UCF_AB, TE_UCF_NO]:
+        fps_a = float(meta.fps.values[r])
+        sp_sec = [(s / fps_a, e / fps_a) for s, e in spans.get(str(meta.fname.values[r]).lower(), [])]
+        n = len(FE[r])
+        for j, st in enumerate(WSTART[r]):
+            t0_, t1_ = st / 2.0, (st + min(WIN, n)) / 2.0          # frame mau 2 FPS -> giay
+            fr_y.append(int(any(t0_ < e and t1_ > s for s, e in sp_sec)))
+            fr_s.append(VS[r][0][j])
+    fr_y, fr_s = np.array(fr_y), np.array(fr_s)
+    print(f"AUC MUC CUA SO (~frame) tren UCF test: {auc(fr_y, fr_s):.3f} | cua so duong: {int(fr_y.sum())} / {len(fr_y)}")
 
-    # nhom: dung tren video bat thuong test
     gi_t = meta.gi.values[TE_UCF_AB]
-    _, g_logits = scores(TE_UCF_AB)
     ok = gi_t >= 0
-    acc = float((g_logits.argmax(1)[ok] == gi_t[ok]).mean()) if ok.any() else float("nan")
-    print(f"DO CHINH XAC PHAN NHOM (video bat thuong UCF test, {ok.sum()} video): {acc:.1%}")
+    pred_g = np.array([vgroup[r].argmax() for r in TE_UCF_AB])
+    acc = float((pred_g[ok] == gi_t[ok]).mean()) if ok.any() else float("nan")
+    print(f"DO CHINH XAC PHAN NHOM (video bat thuong UCF test, {int(ok.sum())} video): {acc:.1%}")
     print(pd.crosstab(pd.Series(np.array(ABN_GROUPS)[gi_t[ok]], name="that"),
-                      pd.Series(np.array(ABN_GROUPS)[g_logits.argmax(1)[ok]], name="du doan")))
+                      pd.Series(np.array(ABN_GROUPS)[pred_g[ok]], name="du doan")))
 
-    # kiem tra loi tat do dai: diem TB theo nhom do dai clip, va AUC cua chinh do dai
+    print("Ti le cua so NGAN (short_clip) theo nhom:", meta.assign(sh=[short_of(r) for r in range(len(meta))])
+          .groupby(["ab", "split"]).sh.mean().round(2).to_dict())
     lens = []
     for name, idx, lab in [("UCF test", np.r_[TE_UCF_AB, TE_UCF_NO], np.r_[np.ones(len(TE_UCF_AB)), np.zeros(len(TE_UCF_NO))]),
                            ("RWF test", TE_RWF, meta.ab.values[TE_RWF].astype(int)),
                            ("RLVS test", TE_RLVS, meta.ab.values[TE_RLVS].astype(int))]:
         if len(idx) == 0:
             continue
-        sc = scores(idx)[0].max(1)
+        sc = np.array([vmax[r] for r in idx])
         print(f"{name}: AUC chi dung DO DAI = {auc(lab, meta.dur_used.values[idx]):.3f}  (AUC mo hinh = {auc(lab, sc):.3f})")
-        lens.append(pd.DataFrame(dict(tap=name, nhan=lab, do_dai=pd.cut(meta.dur_used.values[idx],
-                                                                        [0, 10, 60, 300, S.MAX_SEC]),
+        lens.append(pd.DataFrame(dict(tap=name, nhan=lab, do_dai=pd.cut(meta.dur_used.values[idx], [0, 10, 60, 300, S.MAX_SEC]),
                                       diem=sc)))
     if lens:
         print("== Diem trung binh theo do dai clip (kiem tra loi tat)")
         display(pd.concat(lens).groupby(["tap", "nhan", "do_dai"], observed=True).diem.agg(["count", "mean"]).round(3))
     """),
+    md("## 7. Xuất `scene_head.onnx` (input 16×960), `scene_backbone.onnx`, `scene_config.json`"),
     code(BACKBONE_SRC),
-    md("## 7. Xuất `scene_head.onnx`, `scene_backbone.onnx`, `scene_config.json`"),
     code("""
+    class HeadExport(nn.Module):
+        def __init__(self, m):
+            super().__init__()
+            self.m = m
+
+        def forward(self, x):                                   # (B, 16, 960) -> diem (B,), logit nhom (B, 5)
+            return self.m.win(x)
+
     model.eval().cpu()
     torch.save({"model": model.state_dict(), "mu": MU, "sd": SD}, os.path.join(WORK, "scene_head.pt"))
     head_onnx = os.path.join(WORK, "scene_head.onnx")
-    torch.onnx.export(model, torch.zeros(2, 32, 960), head_onnx, input_names=["x"],
-                      output_names=["seg_score", "group_logits"], opset_version=17,
-                      dynamic_axes={"x": {0: "batch"}, "seg_score": {0: "batch"}, "group_logits": {0: "batch"}},
+    torch.onnx.export(HeadExport(model), torch.zeros(2, WIN, 960), head_onnx, input_names=["x"],
+                      output_names=["window_score", "group_logits"], opset_version=17,
+                      dynamic_axes={"x": {0: "batch"}, "window_score": {0: "batch"}, "group_logits": {0: "batch"}},
                       dynamo=False)
+    model.eval()                                            # torch.onnx.export dua lai che do train -> bat dropout
     import onnxruntime as ort
     sess = ort.InferenceSession(head_onnx, providers=["CPUExecutionProvider"])
-    xx = norm(XS[TE_UCF_AB[:4]] if len(TE_UCF_AB) else XS[:4])
-    ref_s, ref_g = model(torch.from_numpy(xx))
+    xx = nrm(np.stack([win_x(int(r), 0) for r in np.r_[TE_UCF_AB, TR_NO][:4]]))
+    ref_s, ref_g = model.win(torch.from_numpy(xx))
     out_s, out_g = sess.run(None, {"x": xx})
     print(f"ONNX head vs PyTorch: lech {np.abs(out_s - ref_s.detach().numpy()).max():.2e} / {np.abs(out_g - ref_g.detach().numpy()).max():.2e}")
 
@@ -279,8 +313,8 @@ CELLS_05 = [
                               dynamic_axes={"frame_rgb_uint8": {0: "batch"}, "feat960": {0: "batch"}}, dynamo=False)
             print("scene_backbone.onnx da xuat (uint8 RGB 224x224 -> 960)")
 
-    cfg_out = {"fps": S.FPS, "size": S.SIZE, "feat_dim": S.FEAT_DIM, "n_seg": 32, "segment_note":
-               "train tren 32 doan cua video; realtime phai tao 32 doan tu chuoi frame cung cach (xem scene.py)",
+    cfg_out = {"fps": S.FPS, "size": S.SIZE, "feat_dim": S.FEAT_DIM, "window": WIN, "stride": STRIDE,
+               "window_note": "realtime: 16 vector backbone lien tiep (2 FPS = 8 s) -> chuan hoa (mean/std) -> scene_head",
                "groups_abnormal": ABN_GROUPS, "normal_group": NORMAL, "threshold": THR,
                "mean": MU.tolist(), "std": SD.tolist(), "trained_on": "UCF train + RWF NonFight + RLVS NonViolence",
                "quick": QUICK, "results": res.to_dict("records")}
