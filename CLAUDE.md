@@ -118,7 +118,7 @@ Lệnh chạy (từ thư mục `httm`): `python realtime/main.py [nguồn]` – 
 
 ---
 
-## 4. Trạng thái hiện tại (cập nhật 2026-11-08)
+## 4. Trạng thái hiện tại (cập nhật 2026-11-10)
 
 **Đã xong (code trong repo là nguồn chính xác nhất; mục 11 chỉ là bộ khung tuần 1 ban đầu, nay đã mở rộng):**
 - Môi trường `.venv` Python 3.12, đo FPS, export OpenVINO. Repo GitHub `caoconghoe/fight-detection`.
@@ -142,8 +142,9 @@ Lệnh chạy (từ thư mục `httm`): `python realtime/main.py [nguồn]` – 
 
 **Đang làm – LUỒNG 2 (mục 12, quyết định 2026-11-08):** đã có `shared/scene.py`, mục `scene` trong config,
 `kaggle/04_scene_features.ipynb` (chạy thử trên máy bằng dữ liệu giả: quét, gộp 2 bản UCF bỏ trùng theo tên file,
-chia split, trích, chạy tiếp, ước tính thời gian đều đúng); chờ người dùng chạy QUICK trên Kaggle. Notebook 05 chưa viết
-(đọc `scene_meta.csv` của 04 nên tự theo split / nhóm / mẫu bình thường của 04). Notebook 03 trích khung xương UCF: **tạm dừng / không làm**.
+chia split, trích, chạy tiếp, ước tính thời gian đều đúng). **2026-11-10:** chuyển sang bản UCF đầy đủ
+`anomalydetectiondatasetucf` + split chính thức (mục 12.2); chờ người dùng chạy QUICK trên Kaggle. Notebook 05 CHƯA có
+trong repo (yêu cầu ở mục 12.4). Notebook 03 trích khung xương UCF: **tạm dừng / không làm**.
 
 **Còn lại:**
 - Thử webcam với **2 người thật** (Mốc C): giả vờ đánh nhau → báo đúng cặp, khung đỏ; mẫu âm khó (ôm, đập tay, bắt tay).
@@ -921,22 +922,28 @@ không thể hiện (cướp, cháy nổ, đột nhập/trộm, tai nạn...). H
   **chỉ luồng 1 / chỉ luồng 2 / kết hợp**.
 - **Cháy/khói bằng YOLO riêng:** việc sau, CHƯA làm.
 
-### 12.2 Dữ liệu
-- **2 bản UCF-Crime, gộp lại, bỏ trùng theo TÊN FILE** (vd `Abuse001_x264.mp4` có ở cả 2 bản):
-  - `/kaggle/input/datasets/alirakhmaev/ucf-crime-full`: đủ **13 lớp bất thường** (Abuse 50, Arrest 50, Arson 50,
-    Assault 50, Burglary 100, Explosion 50, Fighting 50, RoadAccidents 150, Robbery 150, Shooting 50, Shoplifting 50,
-    Stealing 100, Vandalism 50 = **950**) + `Normal_Videos_for_Event_Recognition` (50).
-  - `/kaggle/input/datasets/mission-ai/crimeucfdataset` (**bỏ mọi đường dẫn chứa `/anomaly/`** – bản sao): trùng 7 lớp
-    đầu, thêm `Normal-Videos-Part-1` (150) và file **`Temporal_Anomaly_Annotation_for_Testing_Videos.txt`**. 320×240.
-- Bình thường UCF chỉ ~200 video → **BẮT BUỘC** thêm NonFight (RWF-2000) + NonViolence (RLVS) làm mẫu bình thường
-  (notebook dừng nếu thiếu; in tỉ lệ bất thường : bình thường của tập train theo số video và số phút).
-- Notebook **tự quét mọi dataset trong /kaggle/input**: nhận lớp theo tên thư mục (chuẩn hoá: bỏ hoa thường, dấu câu)
-  hoặc tiền tố tên file; chống trùng theo (nguồn, lớp, tên file), ưu tiên bản chính (RLVS: bỏ bản sao
-  `real life violence situations`). Add Input bản UCF đầy đủ sau này → tự nhận thêm lớp, không sửa code.
-- **Chia:** UCF (cả 13 lớp + Normal) – video có trong `Temporal_Anomaly_Annotation_for_Testing_Videos.txt`
-  (hoặc `Anomaly_Test.txt`) là **test**, còn lại train; in số video test theo lớp và video test bị thiếu (không có file → tạm chia 80/20 theo hash, KHÔNG tính được AUC mức frame);
-  RWF – thư mục train/val; RLVS – theo `meta.csv` của `01_extract_pose` (khớp ≥ 90%), không có thì 80/20
-  stratified `random_state=42`. `val` của RWF/RLVS gọi chung là `test`.
+### 12.2 Dữ liệu (cập nhật 2026-11-10)
+- **Nguồn UCF chính:** `minhajuddinmeraj/anomalydetectiondatasetucf` (Version 50, 49 GB) – UCF-Crime ĐẦY ĐỦ + file split
+  chính thức. **Chỉ lấy video từ:** `Anomaly-Videos-Part-1..4` (chấp nhận `Part_2`), `Training-Normal-Videos-*`,
+  `Testing_Normal_Videos*`, `Normal_Videos_for_Event_Recognition*`, và thư mục lớp lẻ (`Burglary`, `Explosion`,
+  `Shooting`) nếu không trùng tên file.
+- **LOẠI hẳn** (video biến đổi có thể sinh từ video test → rò rỉ, hoặc không phải video gốc): `All_Data`, mọi thư mục
+  chứa `Augmented`, `FightingA`, `Extracted`, `Per_Frame`, `Model_Trained`; `/anomaly/` (bản sao của mission-ai).
+  Thư mục đặc trưng (`Extracted*`, `Per_Frame*`, `Model_Trained*`) không quét vào – `shared/scene.py::skip_reason`, `no_scan`.
+- **Dự phòng:** `alirakhmaev/ucf-crime-full`, `mission-ai/crimeucfdataset` (có thể Add Input cùng, nhưng bản đầy đủ luôn
+  được ưu tiên).
+- **Bỏ trùng theo TÊN FILE**, giữ theo thứ tự `shared/scene.py::priority`: bản đầy đủ trước bản dự phòng; trong cùng bản,
+  thư mục chính trước thư mục lớp lẻ / `Normal_Videos_for_Event_Recognition`; bản chính trước bản sao (RLVS).
+  Notebook in bảng: mỗi lớp lấy từ thư mục nào, số video giữ / bị loại vì trùng / vì thư mục cấm.
+- **Chia train/test – protocol CHÍNH THỨC:** `Anomaly_Train.txt` + `Normal_Train.txt` = train, `Anomaly_Test.txt` = test
+  (mọi bản sao, kể cả trong `UCF_Crimes-Train-Test-Split*`, được đối chiếu), đối chiếu file chú thích thời gian (có chú
+  thích = test; video ở cả train và test → xếp test). **`Anomaly_Train_New.txt` không dùng** (chỉ báo có giống không).
+  Video UCF ngoài mọi danh sách → `ngoai_ds`, không dùng (`USE_UNLISTED_UCF = False`). Kỳ vọng: ~800 Normal train,
+  150 Normal test, 810 bất thường train, 140 bất thường test (notebook so và đánh dấu `!!` nếu lệch > 2%).
+- **Mẫu bình thường bổ sung:** NonFight (RWF-2000) + NonViolence (RLVS) – giữ (notebook dừng nếu thiếu); in tỉ lệ bất
+  thường : bình thường của tập train theo số video và số phút. RWF train/val theo thư mục; RLVS theo `meta.csv` của
+  `01_extract_pose` (khớp ≥ 90%), không có thì 80/20 stratified `random_state=42`. `val` của RWF/RLVS gọi chung là `test`.
+- Nhận lớp theo tên thư mục (chuẩn hoá: bỏ hoa thường, dấu câu) hoặc tiền tố tên file; mọi thư mục có chữ "Normal" → Normal.
 - Chú thích thời gian: frame ở FPS gốc, `-1` = không có (`shared/scene.py::parse_temporal_annotation`, `frame_labels`).
 
 ### 12.3 Notebook 04 – `kaggle/04_scene_features.ipynb` (sinh bởi `tools/build_scene_notebooks.py`)
@@ -945,9 +952,22 @@ không thể hiện (cướp, cháy nổ, đột nhập/trộm, tai nạn...). H
 - **Chạy tiếp được:** mỗi video xong ghi `scene_feats/<key>.npy` (float16, N × 960, ghi file tạm rồi đổi tên) + 1 dòng
   `scene_feats/_index.csv`; chạy lại bỏ qua video đã xong; Add Input output lần trước → tự chép sang; dừng an toàn sau
   `MAX_HOURS = 11`.
-- `QUICK = True`: 4 video / (lớp, split), 2 phút đầu mỗi video, ghi riêng vào `scene_feats_quick/` (không dùng để
-  train, không lẫn vào bản đầy đủ). Sau lượt chạy, notebook **ước tính thời gian chạy đầy đủ**: khớp
+- **Đặc trưng đầy đủ đã trích ở lần trước** (Add Input output của notebook 04): cùng key `nguồn__lớp__tên file` →
+  bỏ qua (kể cả khi lần trước lấy video từ bản UCF khác) và được chép sang output mới.
+- `QUICK = True`: 4 video / (lớp, split), **ưu tiên video CHƯA có đặc trưng**, 2 phút đầu mỗi video, ghi riêng vào
+  `scene_feats_quick/` (không dùng để train, không lẫn vào bản đầy đủ). Ước tính thời gian in cho **phần video mới**. Sau lượt chạy, notebook **ước tính thời gian chạy đầy đủ**: khớp
   giải mã ≈ a + b × phút video, GPU ≈ giây/frame, hiệu chỉnh bằng thời gian thật của lượt QUICK (thử trên máy: lệch ~30%).
 - Thời điểm frame mẫu thứ i **không lưu** mà tính lại: `sampling.sample_indices([j / fps for j in range(n_read)], 2)`.
 - Đầu ra: `scene_feats/`, `scene_meta.csv` (key, nguồn, lớp, nhóm, train_use, split, đường dẫn, fps, n_read, n_feats...),
   `ucf_annotation.csv`, `scene_inventory.csv` (số video / phút theo lớp, nhóm, split).
+
+### 12.4 Notebook 05 – `kaggle/05_scene_train.ipynb` (CHƯA có trong repo – yêu cầu đã chốt 2026-11-10)
+- **Protocol chuẩn UCF-Crime** (train/test theo danh sách chính thức từ `scene_meta.csv` của 04); có Normal UCF trong
+  train nên **bỏ chế độ chia 75/75**.
+- **Bag kiểu Sultani:** mỗi video chia **32 đoạn** theo thời gian, đặc trưng đoạn = trung bình các frame trong đoạn
+  (**không đệm 0**; video ngắn hơn 32 frame mẫu thì các đoạn dùng chung frame).
+- **Giữ:** chẩn đoán **lối tắt nguồn dữ liệu** (mô hình phân biệt nguồn UCF / RWF / RLVS thay vì bất thường), báo
+  **độ chính xác theo nhóm**.
+- **2 thí nghiệm để so sánh:** (a) UCF + NonFight/NonViolence làm mẫu bình thường bổ sung; (b) **chỉ UCF**.
+- Đánh giá: AUC mức frame trên UCF test (chú thích thời gian), AUC mức clip RWF/RLVS val, độ chính xác phân nhóm.
+- Xuất `scene_backbone.onnx`, `scene_head.onnx`, `scene_config.json`.

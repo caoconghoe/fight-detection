@@ -17,6 +17,13 @@ FEAT_DIM = 960              # MobileNetV3-Large: vector sau global average pooli
 MAX_SEC = 15 * 60           # chỉ lấy 15 phút đầu mỗi video
 VIDEO_EXT = {".mp4", ".avi", ".mpg", ".mpeg", ".mkv", ".mov", ".m4v", ".webm", ".wmv"}
 SKIP_PATH = ("/anomaly/",)  # bản UCF mission-ai có thư mục /anomaly/ trùng -> bỏ
+# Thư mục CẤM (so trên tên đã chuẩn hoá của từng thư mục trong đường dẫn): video biến đổi / gộp lại, có thể sinh từ
+# video test -> rò rỉ; hoặc thư mục đặc trưng / mô hình có sẵn (không phải video gốc).
+FORBIDDEN_EXACT = {"alldata": "All_Data"}
+FORBIDDEN_SUB = {"augmented": "Augmented*", "fightinga": "FightingA*", "extracted": "Extracted*",
+                 "perframe": "Per_Frame*", "modeltrained": "Model_Trained*"}
+NO_SCAN_SUB = ("extracted", "perframe", "modeltrained")          # thư mục đặc trưng: không quét vào (rất nhiều file)
+PREFERRED_DATASETS = ("anomalydetectiondatasetucf",)              # bản UCF đầy đủ (minhajuddinmeraj) – ưu tiên khi trùng
 LOW_PRIORITY_DUP = ("real life violence situations",)   # bản sao trùng của RLVS -> chỉ giữ khi không có bản chính
 NORMAL = "Normal"           # mọi thư mục / tên file có chữ "normal" -> lớp Normal
 SOURCE_OF = {"Fight": "rwf", "NonFight": "rwf", "Violence": "rlvs", "NonViolence": "rlvs"}   # còn lại: ucf
@@ -61,15 +68,45 @@ def source_of(cls):
     return SOURCE_OF.get(cls, "ucf")
 
 
-def skip_path(path):
-    p = str(path).replace("\\", "/").lower()
-    return any(s in p for s in SKIP_PATH)
+def skip_reason(rel_path):
+    """Lý do loại video (None = giữ). rel_path: đường dẫn TƯƠNG ĐỐI trong /kaggle/input (tránh khớp nhầm thư mục gốc)."""
+    p = "/" + str(rel_path).replace("\\", "/").lstrip("/")
+    if any(s in p.lower() for s in SKIP_PATH):
+        return "/anomaly/ (ban sao)"
+    for comp in p.split("/")[:-1]:
+        n = norm(comp)
+        if n in FORBIDDEN_EXACT:
+            return FORBIDDEN_EXACT[n]
+        for sub, label in FORBIDDEN_SUB.items():
+            if sub in n:
+                return label
+    return None
+
+
+def skip_path(rel_path):
+    return skip_reason(rel_path) is not None
+
+
+def no_scan(dirname):
+    """Thư mục đặc trưng / mô hình: không cần quét vào (rất nhiều file, không có video gốc)."""
+    n = norm(dirname)
+    return any(s in n for s in NO_SCAN_SUB)
 
 
 def dup_rank(path):
-    """Thứ tự ưu tiên khi trùng tên file: 0 = bản chính, 1 = bản sao đã biết (giữ bản có rank nhỏ hơn)."""
+    """Ưu tiên giữa các BẢN SAO cùng tên file (nhỏ hơn = giữ): 0 = bản chính, 1 = bản sao RLVS đã biết."""
     p = str(path).replace("\\", "/").lower()
     return int(any(s in p for s in LOW_PRIORITY_DUP))
+
+
+def priority(rel_path, top_folder, index):
+    """Khoá sắp xếp khi trùng tên file (nhỏ hơn = giữ):
+    (dataset ưu tiên trước, thư mục chính trước thư mục lớp lẻ / Event_Recognition, bản chính trước bản sao).
+    top_folder: thư mục cấp đầu ngay dưới gốc dataset (vd Anomaly-Videos-Part-1, Burglary)."""
+    ds = 0 if any(d in norm(rel_path) for d in PREFERRED_DATASETS) else 1
+    t = norm(top_folder)
+    loose = int(t in index or "eventrecognition" in t)
+    return ds, loose, dup_rank(rel_path)
 
 
 def video_key(source, cls, path):
@@ -111,8 +148,14 @@ def parse_temporal_annotation(text):
 
 
 def parse_test_list(text):
-    """Anomaly_Test.txt (vd "Abuse/Abuse028_x264.mp4") -> tập tên file."""
-    return {ln.strip().replace("\\", "/").split("/")[-1] for ln in text.splitlines() if ln.strip()}
+    """Anomaly_Train.txt / Anomaly_Test.txt / Normal_Train.txt (vd "Abuse/Abuse028_x264.mp4") -> tập tên file
+    (chữ thường, chỉ lấy dòng có đuôi video)."""
+    out = set()
+    for ln in text.splitlines():
+        name = ln.strip().replace("\\", "/").split("/")[-1].split()[0] if ln.strip() else ""
+        if name and "." + name.rsplit(".", 1)[-1].lower() in VIDEO_EXT:
+            out.add(name.lower())
+    return out
 
 
 def frame_labels(times, fps_src, spans):

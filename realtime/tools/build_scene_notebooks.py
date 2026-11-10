@@ -46,14 +46,15 @@ CELLS_04 = [
 
     Sinh tự động bởi `realtime/tools/build_scene_notebooks.py` – **không sửa tay**, sửa ở repo rồi sinh lại.
 
-    **Chuẩn bị – Add Input:** `alirakhmaev/ucf-crime-full` (13 lớp bất thường + Normal_Videos_for_Event_Recognition) ·
-    `mission-ai/crimeucfdataset` (Normal-Videos-Part-1 + file chú thích thời gian test) · `daniazehra/rwf-2000` ·
-    `mohamedmustafa/real-life-violence-situations-dataset` (NonFight / NonViolence: **bắt buộc**, bù mẫu bình thường) ·
-    output của `01_extract_pose` (để RLVS dùng đúng split cũ). Settings → **GPU T4** · **Internet on**
-    (tải trọng số ImageNet của MobileNetV3). Hai bản UCF trùng nhau được gộp, bỏ trùng theo tên file.
+    **Chuẩn bị – Add Input:** `minhajuddinmeraj/anomalydetectiondatasetucf` (UCF-Crime ĐẦY ĐỦ + file split chính thức –
+    **ưu tiên**) · `daniazehra/rwf-2000` · `mohamedmustafa/real-life-violence-situations-dataset` (NonFight / NonViolence:
+    **bắt buộc**, mẫu bình thường bổ sung) · output của `01_extract_pose` (RLVS dùng đúng split cũ) · (tuỳ chọn, dự phòng)
+    `alirakhmaev/ucf-crime-full`, `mission-ai/crimeucfdataset` · (nếu đã trích lần trước) output của chính notebook này.
+    Settings → **GPU T4** · **Internet on** (tải trọng số ImageNet của MobileNetV3).
 
-    Notebook **tự quét mọi dataset trong /kaggle/input**: nhận lớp theo tên thư mục (hoặc tiền tố tên file), bỏ mọi
-    đường dẫn chứa `/anomaly/`, chống trùng theo (nguồn, lớp, tên file). Thêm bản UCF đầy đủ sau này → tự nhận thêm lớp.
+    Notebook **tự quét mọi dataset trong /kaggle/input**: nhận lớp theo tên thư mục (hoặc tiền tố tên file), loại thư mục
+    cấm (`All_Data`, `*Augmented*`, `FightingA*`, `Extracted*`, `Per_Frame*`, `Model_Trained*`, `/anomaly/`), bỏ trùng
+    theo tên file (ưu tiên bản đầy đủ), chia train/test theo **danh sách chính thức** của UCF-Crime.
 
     **Chạy:** `QUICK = True` thử (vài video / lớp, 2 phút đầu mỗi video) → ổn thì `QUICK = False`,
     *Save Version → Save & Run All*. **Bị ngắt / quá giờ:** Add Input output của chính notebook này rồi chạy lại –
@@ -105,61 +106,91 @@ CELLS_04 = [
     """),
     md("""
     ## 3. Quét mọi dataset trong /kaggle/input
-    Nhận lớp → bỏ `/anomaly/` → chống trùng theo (nguồn, lớp, tên file), ưu tiên bản chính (RLVS: bỏ bản sao
-    `real life violence situations`). Lớp không có trong dữ liệu tự bỏ qua; lớp mới trong dataset thêm sau tự được nhận.
+    Nhận lớp → **loại thư mục cấm** (`All_Data`, `*Augmented*`, `FightingA*`, `Extracted*`, `Per_Frame*`, `Model_Trained*`:
+    video biến đổi có thể sinh từ video test → rò rỉ; `/anomaly/` của mission-ai) → **bỏ trùng theo tên file**.
+    Khi trùng, giữ theo thứ tự: bản UCF đầy đủ `anomalydetectiondatasetucf` trước 2 bản cũ (dự phòng); trong cùng bản,
+    thư mục chính (`Anomaly-Videos-Part-*`, `Training-Normal-Videos-*`, `Testing_Normal_Videos*`) trước thư mục lớp lẻ
+    (`Burglary`, `Explosion`, `Shooting`) và `Normal_Videos_for_Event_Recognition*`.
+    Cùng lần duyệt thu luôn các file split / chú thích / `meta.csv` / `_index.csv` (không glob lại cả 49 GB).
     """),
     code("""
     INDEX = S.class_index(CFG["groups"], CFG["eval_only"])
-    cands, skipped, unknown = [], Counter(), []
+    TXT_NAMES = {"anomaly_train.txt", "anomaly_test.txt", "normal_train.txt", "anomaly_train_new.txt"}
+    TXT, META_CSVS, PREV_FEATS, cands, info_rows, unknown = {}, [], [], [], [], []
+
+    def rel_parts(p):
+        return os.path.relpath(p, INPUT).replace("\\\\", "/").split("/")
+
+    def dataset_and_top(parts):
+        \"\"\"(tên dataset ngắn, thư mục cấp đầu dưới gốc dataset) – vd ('anomalydetectiondatasetucf', 'Anomaly-Videos-Part-1').\"\"\"
+        if parts[0] in ("datasets", "notebooks", "competitions", "models") and len(parts) > 4:
+            return parts[2], parts[3]
+        return parts[0], (parts[1] if len(parts) > 2 else "")
+
     for root, dirs, files in os.walk(INPUT):
-        if any(c.startswith("scene_feats") for c in root.replace("\\\\", "/").split("/")):
-            continue
+        for d in list(dirs):
+            if d == "scene_feats":
+                PREV_FEATS.append(os.path.join(root, d))
+        dirs[:] = sorted(d for d in dirs if not S.no_scan(d) and not d.startswith("scene_feats"))
         for f in files:
+            fl = f.lower()
+            if fl in TXT_NAMES or fl.startswith("temporal_anomaly_annotation"):
+                TXT.setdefault("temporal_anomaly_annotation" if fl.startswith("temporal") else fl, []).append(
+                    os.path.join(root, f))
+            elif fl == "meta.csv":
+                META_CSVS.append(os.path.join(root, f))
             if os.path.splitext(f)[1].lower() not in S.VIDEO_EXT:
                 continue
             p = os.path.join(root, f).replace("\\\\", "/")
-            if S.skip_path(p):
-                skipped["duong dan chua /anomaly/"] += 1
-                continue
+            parts = rel_parts(p)
+            rel = "/".join(parts)
+            ds, top = dataset_and_top(parts)
             cls = S.detect_class(p, INDEX)
-            if cls is None:
-                skipped["khong nhan ra lop"] += 1
-                unknown.append(p)
+            why = S.skip_reason(rel)
+            row = dict(dataset=ds, top=top, cls=cls or "?", status="giu")
+            if why:
+                row["status"] = "cam: " + why
+            elif cls is None:
+                row["status"] = "khong ro lop"
+                unknown.append(rel)
+            info_rows.append(row)
+            if row["status"] != "giu":
                 continue
             src = S.source_of(cls)
-            # UCF: trùng theo TÊN FILE giữa mọi bản (vd Abuse001_x264.mp4 có ở cả 2 dataset); RWF/RLVS: theo (lớp, tên)
-            dk = (src, f.lower()) if src == "ucf" else (src, cls, f.lower())
-            cands.append((dk, S.dup_rank(p), p, src, cls))
-
-    def dataset_of(p):
-        \"\"\"Tên dataset trong /kaggle/input (vd datasets/alirakhmaev/ucf-crime-full).\"\"\"
-        parts = os.path.relpath(p, INPUT).replace("\\\\", "/").split("/")
-        return parts[2] if parts[0] in ("datasets", "notebooks", "competitions", "models") and len(parts) > 3 else parts[0]
+            # UCF: trùng theo TÊN FILE giữa mọi bản / mọi thư mục; RWF/RLVS: theo (lớp, tên)
+            dk = (src, fl) if src == "ucf" else (src, cls, fl)
+            cands.append((dk, S.priority(rel, top, INDEX), p, src, cls, len(info_rows) - 1))
+    print(f"Thu thap: {len(info_rows)} file video, {sum(len(v) for v in TXT.values())} file split/chu thich, "
+          f"{len(META_CSVS)} meta.csv, {len(PREV_FEATS)} thu muc scene_feats cu")
 
     cands.sort()
-    rows, kept, dup_rows, conflict = [], {}, [], 0
-    for dk, rank, p, src, cls in cands:
+    rows, kept, conflict = [], {}, 0
+    for dk, pri, p, src, cls, i in cands:
         if dk in kept:
-            dup_rows.append(dict(dataset=dataset_of(p), cls=cls))
+            info_rows[i]["status"] = "trung ten file"
             conflict += kept[dk] != cls
             continue
         kept[dk] = cls
         c, g, train_use = INDEX[S.norm(cls)]
         rows.append(dict(key=S.video_key(src, c, p), source=src, cls=c, group=g, train_use=train_use, path=p,
-                         dataset=dataset_of(p)))
+                         dataset=info_rows[i]["dataset"], top=info_rows[i]["top"]))
     vids = pd.DataFrame(rows)
+    info = pd.DataFrame(info_rows)
     assert len(vids), "Khong tim thay video nao trong /kaggle/input -> Add Input cac dataset video"
     assert vids.key.is_unique, "Trung key: " + str(vids.key[vids.key.duplicated()].head().tolist())
-    print(f"Tim thay {len(cands)} video hop le -> giu {len(vids)}, bo {len(dup_rows)} ban trung | bo khac: {dict(skipped)}")
+    print(f"-> GIU {len(vids)} video | " + " | ".join(f"{k}: {v}" for k, v in info.status.value_counts().items()))
     if conflict:
-        print(f"!! {conflict} file trung ten nhung 2 ban xep vao 2 lop khac nhau (giu lop cua ban dau tien)")
+        print(f"!! {conflict} file trung ten nhung 2 ban xep vao 2 lop khac nhau (giu lop cua ban uu tien)")
     if unknown:
         print("Vi du khong nhan ra lop:", unknown[:5])
-    contrib = vids.groupby(["dataset", "cls"]).size().rename("giu").to_frame()
-    if dup_rows:
-        contrib = contrib.join(pd.DataFrame(dup_rows).groupby(["dataset", "cls"]).size().rename("bo_vi_trung"), how="outer")
-    print("== Moi dataset gop bao nhieu video (sau khi bo trung theo ten file)")
-    display(contrib.fillna(0).astype(int).unstack("dataset", fill_value=0))
+
+    print("== Moi lop lay tu thu muc nao (giu / bi loai vi trung ten / vi thu muc cam)")
+    src_tab = (info.assign(trang_thai=info.status.str.replace(r"^cam: .*", "thu muc cam", regex=True))
+                   .groupby(["cls", "dataset", "top", "trang_thai"]).size().unstack("trang_thai", fill_value=0))
+    with pd.option_context("display.max_rows", 300, "display.width", 250):
+        display(src_tab)
+    print("== Thu muc cam: so video bi loai theo luat")
+    display(info[info.status.str.startswith("cam")].groupby(["dataset", "status"]).size().rename("so video"))
     missing = [c for g, cl in CFG["groups"].items() for c in cl if c not in set(vids.cls)]
     print("Lop co trong config nhung KHONG co trong du lieu (tu bo qua):", missing)
     """),
@@ -184,34 +215,68 @@ CELLS_04 = [
     display(vids.groupby(["source", "width", "height"]).size().rename("so video").reset_index().head(20))
     """),
     md("""
-    ## 4. Chia train / test
-    UCF: video có trong `Temporal_Anomaly_Annotation_for_Testing_Videos.txt` (hoặc `Anomaly_Test.txt`) là **test**.
-    RWF: thư mục `train` / `val` chính thức. RLVS: theo split của `01_extract_pose` (meta.csv, nếu đã Add Input),
-    không có thì chia 80/20 stratified `random_state=42`. Ở đây `val` của RWF/RLVS gọi chung là **test**.
+    ## 4. Chia train / test – protocol CHÍNH THỨC của UCF-Crime
+    UCF: `Anomaly_Train.txt` + `Normal_Train.txt` = **train**, `Anomaly_Test.txt` = **test** (mọi bản sao của các file này,
+    kể cả trong `UCF_Crimes-Train-Test-Split*`, được đối chiếu với nhau), đối chiếu với file chú thích thời gian (video có
+    chú thích = test). `Anomaly_Train_New.txt` KHÔNG dùng (chỉ báo nó có giống `Anomaly_Train.txt` không).
+    Video UCF không có trong danh sách nào → `ngoai_ds`, **không dùng** (trừ khi `USE_UNLISTED_UCF = True`).
+    RWF: thư mục `train` / `val`. RLVS: theo `meta.csv` của `01_extract_pose`, không có thì 80/20 stratified
+    `random_state=42`. `val` của RWF/RLVS gọi chung là **test**.
     """),
     code("""
-    def read_any(pattern):
-        fs = sorted(glob.glob(os.path.join(INPUT, "**", pattern), recursive=True))
-        return fs, (open(fs[0], encoding="utf-8", errors="ignore").read() if fs else "")
+    USE_UNLISTED_UCF = False      # True: video UCF ngoài danh sách chính thức được đưa vào train
 
-    ann_files, ann_text = read_any("Temporal_Anomaly_Annotation*.txt")
-    list_files, list_text = read_any("Anomaly_Test.txt")
-    ANN = S.parse_temporal_annotation(ann_text)
-    UCF_TEST = set(ANN) | S.parse_test_list(list_text)
-    print("File chu thich thoi gian:", ann_files[:1], f"({len(ANN)} video)")
-    print("Danh sach test:", list_files[:1])
+    def read_lists(name):
+        \"\"\"Mọi bản sao của 1 file danh sách -> (các đường dẫn, hợp các tập tên file, các bản có giống nhau không).\"\"\"
+        fs = sorted(TXT.get(name, []))
+        sets = [S.parse_test_list(open(f, encoding="utf-8", errors="ignore").read()) for f in fs]
+        return fs, set().union(*sets) if sets else set(), all(x == sets[0] for x in sets)
+
+    LISTS = {n: read_lists(n) for n in ("anomaly_train.txt", "normal_train.txt", "anomaly_test.txt", "anomaly_train_new.txt")}
+    for n, (fs, names, same) in LISTS.items():
+        rel = [os.path.relpath(f, INPUT) for f in fs]
+        print(f"{n:24s}: {len(fs)} ban, {len(names):4d} video" + ("" if same else "  !! CAC BAN KHAC NHAU -> dung hop")
+              + (f"  {rel[:2]}" if rel else ""))
+    ann_paths = sorted(TXT.get("temporal_anomaly_annotation", []))
+    ANN = {}
+    for f in ann_paths:
+        ANN.update(S.parse_temporal_annotation(open(f, encoding="utf-8", errors="ignore").read()))
+    ANN_L = {k.lower(): v for k, v in ANN.items()}
+    print(f"File chu thich thoi gian: {len(ann_paths)} ban, {len(ANN)} video")
+
+    TRAIN_L = LISTS["anomaly_train.txt"][1] | LISTS["normal_train.txt"][1]
+    TEST_L = LISTS["anomaly_test.txt"][1] | set(ANN_L)
+    new = LISTS["anomaly_train_new.txt"][1]
+    if new:
+        a = LISTS["anomaly_train.txt"][1]
+        print("Anomaly_Train_New.txt:", "GIONG HET Anomaly_Train.txt" if new == a else
+              f"KHAC Anomaly_Train.txt (+{len(new - a)} / -{len(a - new)} video) -> KHONG dung")
+    both = TRAIN_L & TEST_L
+    if both:
+        print(f"!! {len(both)} video vua o train vua o test -> xep vao TEST (tranh ro ri): {sorted(both)[:5]}")
+    not_in_test = set(ANN_L) - LISTS["anomaly_test.txt"][1]
+    if LISTS["anomaly_test.txt"][1] and not_in_test:
+        print(f"!! {len(not_in_test)} video co chu thich thoi gian nhung KHONG co trong Anomaly_Test.txt: {sorted(not_in_test)[:5]}")
+    ann_not_listed = {k for k in LISTS["anomaly_test.txt"][1] if not k.startswith("normal") and k not in ANN_L}
+    if ann_not_listed:
+        print(f"!! {len(ann_not_listed)} video bat thuong trong Anomaly_Test.txt KHONG co chu thich thoi gian: "
+              f"{sorted(ann_not_listed)[:5]}")
+
     vids["fname"] = vids.path.map(os.path.basename)
-    vids["split"] = "train"
+    fl = vids.fname.str.lower()
     ucf = vids.source == "ucf"
-    if UCF_TEST:
-        vids.loc[ucf & vids.fname.isin(UCF_TEST), "split"] = "test"
-        UCF_SPLIT = "danh sach test chinh thuc"
+    vids["split"] = "train"
+    if TRAIN_L or TEST_L:
+        vids.loc[ucf, "split"] = "ngoai_ds"
+        vids.loc[ucf & fl.isin(TRAIN_L), "split"] = "train"
+        vids.loc[ucf & fl.isin(TEST_L), "split"] = "test"
+        if USE_UNLISTED_UCF:
+            vids.loc[ucf & (vids.split == "ngoai_ds"), "split"] = "train"
+        UCF_SPLIT = "danh sach chinh thuc (Anomaly_Train/Normal_Train/Anomaly_Test + chu thich thoi gian)"
     else:
         h = vids.key.map(lambda k: int(hashlib.md5(k.encode()).hexdigest(), 16) % 5)
         vids.loc[ucf & (h == 0), "split"] = "test"
-        UCF_SPLIT = "!! TAM: bam 80/20 (KHONG co file chu thich -> khong tinh duoc AUC muc frame)"
-        print("!! KHONG tim thay Temporal_Anomaly_Annotation_for_Testing_Videos.txt / Anomaly_Test.txt trong /kaggle/input.")
-        print("   Add Input mot dataset UCF-Crime co file nay (ban day du thuong co) roi chay lai.")
+        UCF_SPLIT = "!! TAM: bam 80/20 (KHONG co file split / chu thich -> khong tinh duoc AUC muc frame)"
 
     rwf = vids.source == "rwf"
     in_val = vids.path.str.lower().str.contains("/val/") | vids.path.str.lower().str.contains("/test/")
@@ -221,7 +286,7 @@ CELLS_04 = [
     RLVS_SPLIT = "khong co video RLVS"
     if rlvs.any():
         old = {}
-        for mp in glob.glob(os.path.join(INPUT, "**", "meta.csv"), recursive=True):
+        for mp in META_CSVS:
             m = pd.read_csv(mp)
             if {"file", "dataset", "split"} <= set(m.columns):
                 for f, d, sp in zip(m.file, m.dataset, m.split):
@@ -246,29 +311,32 @@ CELLS_04 = [
     print("RWF : thu muc train / val")
     print("RLVS:", RLVS_SPLIT)
 
-    have = set(vids.fname)
+    have = set(fl)
     ann_rows = []
     for k, (c, sp) in ANN.items():
         (s1, e1), (s2, e2) = (list(sp) + [(-1, -1), (-1, -1)])[:2]
-        ann_rows.append(dict(fname=k, cls=c, s1=s1, e1=e1, s2=s2, e2=e2, co_trong_du_lieu=k in have))
+        ann_rows.append(dict(fname=k, cls=c, s1=s1, e1=e1, s2=s2, e2=e2, co_trong_du_lieu=k.lower() in have))
     pd.DataFrame(ann_rows, columns=["fname", "cls", "s1", "e1", "s2", "e2", "co_trong_du_lieu"]).to_csv(
         os.path.join(WORK, "ucf_annotation.csv"), index=False)
-    if ANN:
-        t = vids[ucf & (vids.split == "test")]
-        print(f"UCF test co trong du lieu: {len(t)} video ({t.cls.ne('Normal').sum()} bat thuong, "
-              f"{t.cls.eq('Normal').sum()} binh thuong) / {len(ANN)} video trong file chu thich")
-        ann_cls = pd.Series({k: S.detect_class(k, INDEX) or c for k, (c, _) in ANN.items()})
-        per = pd.DataFrame({"trong_file_chu_thich": ann_cls.value_counts(),
-                            "test_co_trong_du_lieu": t.cls.value_counts(),
-                            "train": vids[ucf & (vids.split == "train")].cls.value_counts()}).fillna(0).astype(int)
-        per["thieu_video_test"] = per.trong_file_chu_thich - per.test_co_trong_du_lieu
-        print("== UCF: so video test / train theo lop (test = co trong file chu thich thoi gian)")
-        display(per.sort_index())
-        if per.thieu_video_test.gt(0).any():
-            print("!! Thieu video test (co trong file chu thich nhung khong co trong du lieu):",
-                  per.thieu_video_test[per.thieu_video_test > 0].to_dict())
-        if not t.cls.eq("Normal").any():
-            print("  (chua co video Normal cua tap test -> AUC muc frame chi tinh tren cac video bat thuong)")
+
+    u = vids[ucf]
+    per = pd.crosstab(u.cls, u.split).reindex(columns=["train", "test", "ngoai_ds"], fill_value=0)
+    listed = pd.Series({n: (S.detect_class(n, INDEX) or "?") for n in TRAIN_L | TEST_L})
+    per["trong_ds_train"] = listed[listed.index.isin(TRAIN_L - TEST_L)].value_counts()
+    per["trong_ds_test"] = listed[listed.index.isin(TEST_L)].value_counts()
+    per = per.fillna(0).astype(int)
+    per["thieu_train"] = (per.trong_ds_train - per.train).clip(lower=0)
+    per["thieu_test"] = (per.trong_ds_test - per.test).clip(lower=0)
+    print("== UCF: so video train / test theo lop (co trong du lieu) so voi danh sach chinh thuc")
+    display(per)
+    nrm = u.cls == "Normal"
+    got = {"Normal train": (nrm & (u.split == "train")).sum(), "Normal test": (nrm & (u.split == "test")).sum(),
+           "bat thuong train": (~nrm & (u.split == "train")).sum(), "bat thuong test": (~nrm & (u.split == "test")).sum()}
+    expect = {"Normal train": 800, "Normal test": 150, "bat thuong train": 810, "bat thuong test": 140}
+    print("So voi ky vong:", " | ".join(f"{k}: {got[k]} (~{expect[k]})" + ("" if abs(got[k] - expect[k]) <= 0.02 * expect[k]
+                                         else " !!") for k in expect))
+    if (u.split == "ngoai_ds").any():
+        print(f"Video UCF ngoai danh sach (khong dung): {(u.split == 'ngoai_ds').sum()} – vd {u.fname[u.split == 'ngoai_ds'].head(3).tolist()}")
     """),
     md("## 5. Thống kê: số video / số phút theo lớp và nhóm"),
     code("""
@@ -304,13 +372,27 @@ CELLS_04 = [
     print(f"  binh thuong gom: UCF {(is_norm & (tr.source == 'ucf')).sum()} video, "
           f"RWF NonFight {(tr.cls == 'NonFight').sum()}, RLVS NonViolence {(tr.cls == 'NonViolence').sum()}")
 
-    if QUICK:
-        plan = (vids.groupby(["cls", "split"], group_keys=False)
-                    .apply(lambda g: g.sample(min(len(g), QUICK_PER_CLASS), random_state=SEED)))
-        plan = vids.loc[sorted(plan.index)].reset_index(drop=True)
+    # Đặc trưng ĐẦY ĐỦ đã trích ở lần trước (Add Input output của notebook này): cùng key (= nguồn + lớp + tên file)
+    # -> bỏ qua, kể cả khi lần trước lấy video từ bản UCF khác
+    FULL_DONE = set()
+    for d in PREV_FEATS + [os.path.join(WORK, "scene_feats")]:
+        f_idx = os.path.join(d, "_index.csv")
+        if os.path.exists(f_idx):
+            old = pd.read_csv(f_idx)
+            FULL_DONE |= {k for k in old.key[old.status == "ok"] if os.path.exists(os.path.join(d, k + ".npy"))}
+    usable = vids[vids.split != "ngoai_ds"]
+    have_prev = usable.key.isin(FULL_DONE)
+    print(f"Dac trung day du da co tu lan truoc: {have_prev.sum()} / {len(usable)} video dung duoc "
+          f"-> con MOI {(~have_prev).sum()} video, {usable.minutes[~have_prev].sum() / 60:.1f} gio")
+
+    if QUICK:      # chọn video MỚI (chưa có đặc trưng) để đo thời gian cho phần sẽ phải trích
+        pool = usable[~have_prev] if (~have_prev).any() else usable
+        pick = [i for _, g in pool.groupby(["cls", "split"]) for i in g.sample(min(len(g), QUICK_PER_CLASS),
+                                                                               random_state=SEED).index]
+        plan = vids.loc[sorted(pick)].reset_index(drop=True)
     else:
-        plan = vids
-    print(f"Se trich {len(plan)} video" + (" (QUICK)" if QUICK else ""))
+        plan = usable.reset_index(drop=True)
+    print(f"Se trich {len(plan)} video" + (" (QUICK, ghi vao scene_feats_quick/)" if QUICK else ""))
     """),
     md("## 6. Backbone MobileNetV3-Large (đóng băng) – dùng chung với notebook 05"),
     code(BACKBONE_SRC + textwrap.dedent("""
@@ -333,8 +415,10 @@ CELLS_04 = [
     INDEX_CSV = os.path.join(FEATS, "_index.csv")
     COLS = ["key", "status", "fps", "n_read", "n_feats", "bad_frames", "width", "height", "sec"]
 
-    # nối tiếp từ output của lần chạy trước (Add Input output của chính notebook này)
-    for prev in glob.glob(os.path.join(INPUT, "**", "scene_feats", "_index.csv"), recursive=True):
+    # nối tiếp từ output của lần chạy trước (Add Input output của chính notebook này) – chỉ khi trích ĐẦY ĐỦ
+    for prev in ([] if QUICK else [os.path.join(d, "_index.csv") for d in PREV_FEATS]):
+        if not os.path.exists(prev):
+            continue
         old = pd.read_csv(prev)
         old = old[old.status == "ok"]
         n_copy = 0
@@ -459,13 +543,15 @@ CELLS_04 = [
 
         calib = WALL / max(predict(st.minutes), 1e-6)
         full_min = np.minimum(vids.dur_s, S.MAX_SEC) / 60
-        rest = np.ones(len(vids), bool) if QUICK else ~vids.key.isin(done | set(st.key)).values   # QUICK: phải trích lại hết
+        # phần còn phải trích ĐẦY ĐỦ: video dùng được, chưa có đặc trưng đầy đủ từ lần trước (QUICK không tính là xong)
+        finished = FULL_DONE if QUICK else FULL_DONE | done | set(st.key)
+        rest = ((vids.split != "ngoai_ds") & ~vids.key.isin(finished)).values
         todo_min = full_min[rest]
         est = predict(todo_min) * calib
         print(f"Do tren {len(st)} video ({st.minutes.sum():.1f} phut video, {st.frames.sum()} frame), thuc te {WALL:.0f} s:")
         print(f"  giai ma: {a:.2f} s/video + {b:.2f} s/phut video (1 worker) | GPU: {gpu_per_frame * 1000:.2f} ms/frame "
               f"| hieu chinh x{calib:.2f}")
-        print(f"  -> Con {len(todo_min)} video, {todo_min.sum() / 60:.1f} gio video ({todo_min.sum() * 60 * S.FPS / 1e6:.2f} trieu frame)")
+        print(f"  -> Con {len(todo_min)} video MOI can trich, {todo_min.sum() / 60:.1f} gio video ({todo_min.sum() * 60 * S.FPS / 1e6:.2f} trieu frame)")
         by = vids[rest].assign(m=todo_min).groupby("source").m
         for src, m in by:
             print(f"     {src:5s}: {len(m):5d} video, {m.sum() / 60:6.1f} gio video -> ~{predict(m) * calib / 60:7.1f} phut")
