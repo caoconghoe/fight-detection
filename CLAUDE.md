@@ -327,7 +327,7 @@ Viết `realtime/tools/build_kaggle_notebook.py` sinh ra `kaggle/02_train.ipynb`
 ### Giai đoạn E – LUỒNG 2: nhìn cả cảnh (mục 12)
 - [x] **E0.** `shared/scene.py`, mục `scene` trong `config.yaml`, `tools/build_scene_notebooks.py`, test `tests/test_scene.py`.
 - [ ] **E1.** `kaggle/04_scene_features.ipynb` – *đã viết + chạy thử trên máy; CHỜ chạy QUICK rồi đầy đủ trên Kaggle.*
-- [ ] **E2.** `kaggle/05_scene_train.ipynb` – train MIL (ranking loss Sultani 2018) + head phân nhóm; đánh giá; xuất ONNX.
+- [~] **E2.** *(đã sinh `kaggle/05_scene_train.ipynb` bằng `realtime/tools/build_scene_train.py`, chạy thử trên dữ liệu giả OK; CHỜ chạy trên Kaggle)* – train MIL (ranking loss Sultani 2018) + head phân nhóm; đánh giá; xuất ONNX.
 - [ ] **E3.** `detectors/scene.py` – luồng nền 2 FPS (backbone OpenVINO), làm mượt, báo ≥ 2 s; đo FPS luồng 1 không giảm.
 - [ ] **E4.** DB thêm `scene_score`, `scene_group`, `fight_score` cho mọi sự kiện; `evaluate.py` bảng so sánh
   chỉ luồng 1 / chỉ luồng 2 / kết hợp.
