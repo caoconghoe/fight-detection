@@ -31,11 +31,13 @@ CELLS_05 = [
     """),
     code("""
     import importlib.util, subprocess, sys
-    if importlib.util.find_spec("onnx") is None:
-        r = subprocess.run([sys.executable, "-m", "pip", "install", "-q", "onnx", "onnxscript"])
-        assert r.returncode == 0, "pip install loi -> bat Internet: Settings -> Internet on"
+    need = [m for m in ("onnx", "onnxruntime") if importlib.util.find_spec(m) is None]
+    if need:
+        r = subprocess.run([sys.executable, "-m", "pip", "install", "-q", "onnx", "onnxscript", "onnxruntime"])
+        assert r.returncode == 0, "pip install that bai (" + ", ".join(need) + ") -> bat Internet: Settings -> Internet on"
     import onnx
-    print("onnx", onnx.__version__)
+    import onnxruntime
+    print("onnx", onnx.__version__, "| onnxruntime", onnxruntime.__version__)
     """),
     md("## 1. Code dùng chung với realtime"),
     writefile("scene.py"),
@@ -140,6 +142,18 @@ CELLS_05 = [
     def wts(idx):
         w = np.maximum(meta.train_w.values[idx].astype(float), 1e-9)
         return w / w.sum()                                      # can bang theo phut (train_w)
+    """),
+    code("""
+    from sklearn.metrics import roc_auc_score as _auc
+    print("== Ti le cua so LAP FRAME (short_clip) va do dai TRUOC khi huan luyen")
+    tab = meta.assign(short=[short_of(r) for r in range(len(meta))]).groupby(["ab", "split", "source"]).agg(
+        so_video=("key", "size"), ti_le_cua_so_lap=("short", "mean"), do_dai_TB_s=("dur_used", "mean")).round(2)
+    display(tab)
+    if len(TE_UCF_AB) and len(TE_UCF_NO):
+        y_len = np.r_[np.ones(len(TE_UCF_AB)), np.zeros(len(TE_UCF_NO))]
+        d_len = meta.dur_used.values[np.r_[TE_UCF_AB, TE_UCF_NO]]
+        print(f"AUC CHI DUNG DO DAI tren UCF test (bat thuong vs Normal ngoai mien): {_auc(y_len, d_len):.3f}")
+        print(f"Normal UCF test: do dai TB {meta.dur_used.values[TE_UCF_NO].mean():.1f} s | bat thuong test: {meta.dur_used.values[TE_UCF_AB].mean():.1f} s")
     """),
     md("""
     ## 5. Mô hình và huấn luyện (MIL kiểu Sultani trên cửa sổ)
