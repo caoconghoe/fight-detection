@@ -290,7 +290,17 @@ CELLS_04 = [
     if TRAIN_K or TEST_K:
         vids.loc[ucf, "split"] = "ngoai_ds"
         vids.loc[ucf & vids.stem.isin(TRAIN_K), "split"] = "train"
-        nrm_folder_test = vids.path.map(lambda p: "testingnormal" in re.sub("[^a-z0-9]", "", p.lower()))
+        def _norm_path(p):
+            return re.sub("[^a-z0-9]", "", p.lower())
+        in_ad = vids.path.map(lambda p: "anomalydataset" in _norm_path(p)) & ucf
+        n_normal_before = int((vids.cls[in_ad] == "Normal").sum())
+        vids.loc[in_ad, "cls"] = "Normal"                 # Anomaly_Dataset = video binh thuong (quyet dinh 2026-11-10)
+        vids.loc[in_ad, "group"] = CFG["normal_group"]
+        vids.loc[in_ad, "train_use"] = True
+        print(f"Anomaly_Dataset: {int(in_ad.sum())} video, {n_normal_before} da co ten Normal, "
+              f"{int(in_ad.sum()) - n_normal_before} doi sang Normal")
+        nrm_folder_test = vids.path.map(lambda p: any(k in _norm_path(p) for k in
+                                        ("testingnormal", "anomalydataset", "normalvideosforeventrecognition")))
         vids.loc[ucf & (vids.cls == "Normal") & nrm_folder_test & ~vids.stem.isin(TRAIN_K), "split"] = "test"
         vids.loc[ucf & vids.stem.isin(TEST_K), "split"] = "test"
         if USE_UNLISTED_UCF:
@@ -355,6 +365,16 @@ CELLS_04 = [
             vids.loc[sel, "train_w"] = 0.5 * vids.loc[sel, "minutes"] / tot[flag]
     print(f"Can bang theo phut (train_w, moi nhom tong 0.5): binh thuong {tot.get(True, 0):.1f} phut, "
           f"bat thuong {tot.get(False, 0):.1f} phut -> lay mau ti le train_w")
+    vids["dur_c"] = np.minimum(vids.dur_s, S.MAX_SEC)     # thoi luong sau gioi han 15 phut (dung cho moi bang)
+    ab = vids[vids.group != CFG["normal_group"]]
+    print(f"Nhom BAT THUONG (tat ca split): {len(ab)} video, tong {ab.dur_s.sum():.0f} s thuc te, "
+          f"{ab.dur_c.sum():.0f} s sau gioi han")
+    print("5 video bat thuong dai nhat (thoi luong that):")
+    for _, r in ab.nlargest(5, "dur_s").iterrows():
+        print(f"  {r.dur_s:8.1f} s  {os.path.relpath(r.path, INPUT)}")
+    n_long = int((vids.dur_s > S.MAX_SEC).sum())
+    print(f"Video dai hon {S.MAX_SEC // 60} phut: {n_long} (extract chi lay {MAX_SEC // 60 if not QUICK else QUICK_MAX_SEC} giay dau; "
+          f"bang thong ke dung minutes = min(dur, {S.MAX_SEC // 60} phut))")
     print("UCF :", UCF_SPLIT)
     print("RWF : thu muc train / val")
     print("RLVS:", RLVS_SPLIT)
@@ -421,7 +441,7 @@ CELLS_04 = [
           f"RWF NonFight {(tr.cls == 'NonFight').sum()}, RLVS NonViolence {(tr.cls == 'NonViolence').sum()}")
     print("Do dai clip trung binh (giay) theo nhom va nguon:")
     display(tr.assign(loai=np.where(is_norm, "binh thuong", "bat thuong")).groupby(["loai", "source"])
-              .dur_s.agg(["count", "mean", "min", "max"]).round(1))
+              .dur_c.agg(["count", "mean", "min", "max"]).round(1))
 
     # Đặc trưng ĐẦY ĐỦ đã trích ở lần trước (Add Input output của notebook này): cùng key (= nguồn + lớp + tên file)
     # -> bỏ qua, kể cả khi lần trước lấy video từ bản UCF khác
