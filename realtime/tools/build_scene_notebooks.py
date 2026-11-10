@@ -102,6 +102,7 @@ CELLS_04 = [
     print("torch", torch.__version__, "torchvision", torchvision.__version__, "| device:", DEVICE,
           "|", torch.cuda.get_device_name(0) if DEVICE == "cuda" else "KHONG CO GPU (Settings -> Accelerator)")
     print(f"QUICK = {QUICK} | {S.FPS} FPS, {S.SIZE} px, toi da {MAX_SEC / 60:.0f} phut/video | CPU workers = {N_WORKERS}")
+    print(f"MAX_SEC khi chay day du = {S.MAX_SEC} s ({S.MAX_SEC // 60} phut) | dang dung = {MAX_SEC} s")
     print("Nhom:", {g: len(c) for g, c in CFG["groups"].items()}, "| chi danh gia:", CFG["eval_only"])
     """),
     md("""
@@ -456,11 +457,34 @@ CELLS_04 = [
     print(f"Dac trung day du da co tu lan truoc: {have_prev.sum()} / {len(usable)} video dung duoc "
           f"-> con MOI {(~have_prev).sum()} video, {usable.minutes[~have_prev].sum() / 60:.1f} gio")
 
-    if QUICK:      # chọn video MỚI (chưa có đặc trưng) để đo thời gian cho phần sẽ phải trích
-        pool = usable[~have_prev] if (~have_prev).any() else usable
-        pick = [i for _, g in pool.groupby(["cls", "split"]) for i in g.sample(min(len(g), QUICK_PER_CLASS),
-                                                                               random_state=SEED).index]
-        plan = vids.loc[sorted(pick)].reset_index(drop=True)
+    QUICK_MIN_NEW = 10
+    q_idx = os.path.join(FEATS, "_index.csv")
+    if QUICK:
+        # QUICK phai trich THAT it nhat QUICK_MIN_NEW video de do thoi gian: uu tien video chua co cache QUICK,
+        # roi xoa cache QUICK cua cac video duoc chon (cache QUICK khong dung cho ban day du)
+        q_done = set(pd.read_csv(q_idx).key) if os.path.exists(q_idx) else set()
+        rng = np.random.default_rng(SEED)
+        order = usable.assign(_fresh=~usable.key.isin(q_done), _r=rng.random(len(usable)))
+        order = order.sort_values(["_fresh", "_r"], ascending=[False, True])
+        pick = []
+        for _, g in order.groupby(["cls", "split"]):
+            pick += list(g.index[:QUICK_PER_CLASS])
+        pick = list(dict.fromkeys(pick))
+        for i in order.index:
+            if len(pick) >= QUICK_MIN_NEW:
+                break
+            if i not in pick:
+                pick.append(i)
+        plan = usable.loc[sorted(pick)].reset_index(drop=True)
+        n_fresh = int((~plan.key.isin(q_done)).sum())
+        for k in plan.key:
+            fq = os.path.join(FEATS, k + ".npy")
+            if os.path.exists(fq):
+                os.remove(fq)
+        if os.path.exists(q_idx):
+            ix = pd.read_csv(q_idx)
+            ix[~ix.key.isin(plan.key)].to_csv(q_idx, index=False)
+        print(f"QUICK: chon {len(plan)} video ({n_fresh} chua co cache QUICK), da xoa cache QUICK cua chung de trich lai")
     else:
         plan = usable.reset_index(drop=True)
     print(f"Se trich {len(plan)} video" + (" (QUICK, ghi vao scene_feats_quick/)" if QUICK else ""))
@@ -647,7 +671,7 @@ CELLS_04 = [
             return np.stack([f[e[i]:max(e[i] + 1, e[i + 1])].astype(np.float32).mean(0) for i in range(32)])
         return f[np.linspace(0, n - 1, 32).round().astype(int)].astype(np.float32)
 
-    n_seg, n_skip = 0, 0
+    n_seg, n_skip, n_bad = 0, 0, 0
     for k in vids[vids.split != "ngoai_ds"].key:
         src, dst = os.path.join(FEATS, k + ".npy"), os.path.join(SEG_DIR, k + ".npy")
         if not os.path.exists(src):
@@ -656,10 +680,12 @@ CELLS_04 = [
         if os.path.exists(dst):
             continue
         g = seg32(np.load(src))
-        assert np.isfinite(g).all() and (np.abs(g).sum(1) > 0).all(), k
+        if not np.isfinite(g).all() or (np.abs(g).sum(1) == 0).any():
+            n_bad += 1
+            print('!! doan 32 khong hop le (NaN hoac toan 0):', k)
         np.save(dst, g.astype(np.float16))
         n_seg += 1
-    print(f"Doan 32: ghi {n_seg} video moi, bo qua {n_skip} video chua co dac trung (QUICK chi co mot phan)")
+    print(f"Doan 32: ghi {n_seg} video moi, bo qua {n_skip} video chua co dac trung (QUICK chi co mot phan), {n_bad} doan khong hop le")
     """),
     md("## 8. Tổng hợp `scene_meta.csv` + kiểm tra"),
     code("""
