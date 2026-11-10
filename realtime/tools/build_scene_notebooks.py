@@ -216,7 +216,7 @@ CELLS_04 = [
     """),
     md("""
     ## 4. Chia train / test – protocol CHÍNH THỨC của UCF-Crime
-    UCF: `Anomaly_Train.txt` + `Normal_Train.txt` = **train**, `Anomaly_Test.txt` = **test** (mọi bản sao của các file này,
+    UCF: `Anomaly_Train.txt` = **train** (Normal UCF không có mp4 → không dùng `Normal_Train.txt`; Normal train = RWF NonFight + RLVS NonViolence), `Anomaly_Test.txt` = **test** (mọi bản sao của các file này,
     kể cả trong `UCF_Crimes-Train-Test-Split*`, được đối chiếu với nhau), đối chiếu với file chú thích thời gian (video có
     chú thích = test). `Anomaly_Train_New.txt` KHÔNG dùng (chỉ báo nó có giống `Anomaly_Train.txt` không).
     Video UCF không có trong danh sách nào → `ngoai_ds`, **không dùng** (trừ khi `USE_UNLISTED_UCF = True`).
@@ -253,7 +253,7 @@ CELLS_04 = [
     for f in ann_paths:
         ANN.update(S.parse_temporal_annotation(open(f, encoding="utf-8", errors="ignore").read()))
     print(f"File chu thich thoi gian: {len(ann_paths)} ban, {len(ANN)} video")
-    TRAIN_K = LISTS["anomaly_train.txt"][1] | LISTS["normal_train.txt"][1]
+    TRAIN_K = LISTS["anomaly_train.txt"][1]   # Normal UCF khong co mp4 -> khong dung Normal_Train.txt
     TEST_K = LISTS["anomaly_test.txt"][1] | {S.key_of(k) for k in ANN}
     print(f"Khoa chuan hoa (bo duoi, dau gach, hoa thuong): train {len(TRAIN_K)}, test {len(TEST_K)}")
     if TRAIN_K & TEST_K:
@@ -266,6 +266,20 @@ CELLS_04 = [
         print("Anomaly_Train_New.txt:", "GIONG HET Anomaly_Train.txt" if new == LISTS["anomaly_train.txt"][1]
               else "KHAC -> khong dung")
 
+    AT_FILES = sorted(TXT.get("anomaly_train.txt", []))
+    if AT_FILES:
+        from collections import Counter
+        raw = [ln.split()[0] for ln in open(AT_FILES[0], encoding="utf-8", errors="ignore").read().splitlines()
+               if ln.split() and ln.split()[0].lower() not in ("name", "file")]
+        have_keys = set(vids.path.map(S.key_of))
+        n_dup = len(raw) - len(set(S.key_of(x) for x in raw))
+        unmatched = [(r, S.key_of(r)) for r in raw if S.key_of(r) not in have_keys]
+        cause = Counter("Normal (loai khoi bat thuong)" if "normal" in k else "khong co file trong du lieu"
+                        for _, k in unmatched)
+        print(f"Anomaly_Train.txt: {len(raw)} dong, {len(set(S.key_of(x) for x in raw))} khoa duy nhat "
+              f"({n_dup} dong trung), khop file that: {len(raw) - len(unmatched)}, khong khop: {len(unmatched)}")
+        print("  nguyen nhan:", dict(cause))
+        print("  5 ten dau khong khop:", [r for r, _ in unmatched[:5]])
     vids["fname"] = vids.path.map(os.path.basename)
     fl = vids.fname.str.lower()
     vids["stem"] = vids.path.map(S.key_of)
@@ -281,6 +295,9 @@ CELLS_04 = [
         vids.loc[ucf & vids.stem.isin(TEST_K), "split"] = "test"
         if USE_UNLISTED_UCF:
             vids.loc[ucf & (vids.split == "ngoai_ds"), "split"] = "train"
+        nrm_u = ucf & (vids.cls == "Normal")
+        vids.loc[nrm_u, "split"] = "ngoai_ds"
+        vids.loc[nrm_u & nrm_folder_test, "split"] = "test"
         UCF_SPLIT = "danh sach chinh thuc"
     else:
         h = vids.key.map(lambda k: int(hashlib.md5(k.encode()).hexdigest(), 16) % 5)
@@ -288,8 +305,6 @@ CELLS_04 = [
 
     nf = vids[ucf & (vids.cls == "Normal")]
     print(f"Normal UCF tim thay: {len(nf)} video, theo thu muc: {nf.top.value_counts().to_dict()}")
-    n_list = len(LISTS["normal_train.txt"][1])
-    print(f"  Normal UCF khop Normal_Train.txt: {int(nf.stem.isin(LISTS['normal_train.txt'][1]).sum())} / {n_list} dong trong danh sach")
     print(f"  Normal UCF o test (thu muc Testing_Normal hoac chu thich): {int((nf.split == 'test').sum())}")
     if len(nf):
         print("  vi du ten file Normal:", nf.fname.head(5).tolist())
@@ -362,11 +377,12 @@ CELLS_04 = [
     print("== UCF: so video train / test theo lop (co trong du lieu) so voi danh sach chinh thuc")
     display(per)
     nrm = u.cls == "Normal"
-    got = {"Normal train": (nrm & (u.split == "train")).sum(), "Normal test": (nrm & (u.split == "test")).sum(),
+    got = {"Normal test (ngoai mien)": (nrm & (u.split == "test")).sum(),
            "bat thuong train": (~nrm & (u.split == "train")).sum(), "bat thuong test": (~nrm & (u.split == "test")).sum()}
-    expect = {"Normal train": 800, "Normal test": 150, "bat thuong train": 810, "bat thuong test": 140}
-    print("So voi ky vong:", " | ".join(f"{k}: {got[k]} (~{expect[k]})" + ("" if abs(got[k] - expect[k]) <= 0.02 * expect[k]
-                                         else " !!") for k in expect))
+    expect = {"Normal test (ngoai mien)": 150, "bat thuong train": 810, "bat thuong test": 140}
+    print("So voi ky vong:", " | ".join(f"{k}: {got[k]} (~{expect[k]})"
+                                       + ("" if abs(got[k] - expect[k]) <= 0.02 * expect[k] else " !!") for k in expect))
+    print("Normal train = RWF NonFight + RLVS NonViolence (ky vong ~1600, xem bang TAP TRAIN)")
     if (u.split == "ngoai_ds").any():
         print(f"Video UCF ngoai danh sach (khong dung): {(u.split == 'ngoai_ds').sum()} – vd {u.fname[u.split == 'ngoai_ds'].head(3).tolist()}")
     """),
@@ -403,6 +419,9 @@ CELLS_04 = [
           f"{am:.0f} : {nm:.0f} phut ({am / max(nm, 1e-9):.2f})")
     print(f"  binh thuong gom: UCF {(is_norm & (tr.source == 'ucf')).sum()} video, "
           f"RWF NonFight {(tr.cls == 'NonFight').sum()}, RLVS NonViolence {(tr.cls == 'NonViolence').sum()}")
+    print("Do dai clip trung binh (giay) theo nhom va nguon:")
+    display(tr.assign(loai=np.where(is_norm, "binh thuong", "bat thuong")).groupby(["loai", "source"])
+              .dur_s.agg(["count", "mean", "min", "max"]).round(1))
 
     # Đặc trưng ĐẦY ĐỦ đã trích ở lần trước (Add Input output của notebook này): cùng key (= nguồn + lớp + tên file)
     # -> bỏ qua, kể cả khi lần trước lấy video từ bản UCF khác
