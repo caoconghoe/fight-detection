@@ -122,6 +122,13 @@ def test_priority_order():
     assert pa < pl and pt < pe and pa < po and pl < po                                           # bản đầy đủ luôn trước
 
 
+def test_augment_and_keys():
+    assert S.is_augmented("Abuse001_x264A.mp4") and S.is_augmented("Burglary005_x264_flip.mp4")
+    assert not S.is_augmented("Abuse001_x264.mp4") and not S.is_augmented("Normal_Videos_003_x264.mp4")
+    assert S.key_of("Training/Normal_Videos001_x264") == S.key_of("Normal_Videos001_x264.mp4") == "normalvideos001"
+    assert S.base_of("Abuse001_x264A.mp4") == S.key_of("Abuse001_x264.mp4")
+
+
 if __name__ == "__main__":
     tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_") and callable(f)]
     failed = 0

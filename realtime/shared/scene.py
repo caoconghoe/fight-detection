@@ -68,6 +68,29 @@ def source_of(cls):
     return SOURCE_OF.get(cls, "ucf")
 
 
+AUG_RE = re.compile(r"(?i)((?<=[0-9])[_-]?a|[_-](aug|flip|flipped|noise|blur|bright|dark|rot)[a-z0-9]*)$")
+
+
+def key_of(name):
+    """Khoá so khớp tên video / dòng danh sách: bỏ thư mục, đuôi, dấu, hoa thường, hậu tố x264 -> chữ và số."""
+    base = str(name).strip().replace("\\", "/").split("/")[-1]
+    stem = base.rsplit(".", 1)[0] if "." in base else base
+    key = re.sub(r"[^a-z0-9]", "", stem.lower())
+    return key[:-4] if key.endswith("x264") else key   # danh sach UCF co khi thieu hau to _x264
+
+
+def is_augmented(name):
+    """Bản augment (hậu tố A như Abuse001_x264A, hoặc _flip/_aug...): loại khỏi train VÀ test."""
+    stem = str(name).replace("\\", "/").split("/")[-1].rsplit(".", 1)[0]
+    return AUG_RE.search(stem) is not None
+
+
+def base_of(name):
+    """Khoá của video gốc ứng với một bản augment (bỏ hậu tố)."""
+    stem = str(name).replace("\\", "/").split("/")[-1].rsplit(".", 1)[0]
+    return key_of(AUG_RE.sub("", stem) or stem)
+
+
 def skip_reason(rel_path):
     """Lý do loại video (None = giữ). rel_path: đường dẫn TƯƠNG ĐỐI trong /kaggle/input (tránh khớp nhầm thư mục gốc)."""
     p = "/" + str(rel_path).replace("\\", "/").lstrip("/")

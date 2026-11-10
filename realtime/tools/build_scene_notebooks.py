@@ -226,57 +226,76 @@ CELLS_04 = [
     code("""
     USE_UNLISTED_UCF = False      # True: video UCF ngoài danh sách chính thức được đưa vào train
 
+    import re
+    def read_keys(text):
+        out = set()
+        for ln in text.splitlines():
+            tok = ln.split()
+            if tok and tok[0].lower() not in ("name", "file"):
+                out.add(S.key_of(tok[0]))
+        return out
+
     def read_lists(name):
-        \"\"\"Mọi bản sao của 1 file danh sách -> (các đường dẫn, hợp các tập tên file, các bản có giống nhau không).\"\"\"
         fs = sorted(TXT.get(name, []))
-        sets = [S.parse_test_list(open(f, encoding="utf-8", errors="ignore").read()) for f in fs]
+        sets = [read_keys(open(f, encoding="utf-8", errors="ignore").read()) for f in fs]
         return fs, set().union(*sets) if sets else set(), all(x == sets[0] for x in sets)
 
     LISTS = {n: read_lists(n) for n in ("anomaly_train.txt", "normal_train.txt", "anomaly_test.txt", "anomaly_train_new.txt")}
     for n, (fs, names, same) in LISTS.items():
         rel = [os.path.relpath(f, INPUT) for f in fs]
-        print(f"{n:24s}: {len(fs)} ban, {len(names):4d} video" + ("" if same else "  !! CAC BAN KHAC NHAU -> dung hop")
-              + (f"  {rel[:2]}" if rel else ""))
+        print(f"{n:24s}: {len(fs)} ban, {len(names):4d} video" + ("" if same else "  !! CAC BAN KHAC NHAU")
+              + (f"  {rel[:1]}" if rel else ""))
+    for n in ("normal_train.txt", "anomaly_test.txt"):
+        for f in sorted(TXT.get(n, []))[:1]:
+            print(n, "- 5 dong dau (ten goc):", open(f, encoding="utf-8", errors="ignore").read().splitlines()[:5])
     ann_paths = sorted(TXT.get("temporal_anomaly_annotation", []))
     ANN = {}
     for f in ann_paths:
         ANN.update(S.parse_temporal_annotation(open(f, encoding="utf-8", errors="ignore").read()))
-    ANN_L = {k.lower(): v for k, v in ANN.items()}
     print(f"File chu thich thoi gian: {len(ann_paths)} ban, {len(ANN)} video")
-
-    TRAIN_L = LISTS["anomaly_train.txt"][1] | LISTS["normal_train.txt"][1]
-    TEST_L = LISTS["anomaly_test.txt"][1] | set(ANN_L)
+    TRAIN_K = LISTS["anomaly_train.txt"][1] | LISTS["normal_train.txt"][1]
+    TEST_K = LISTS["anomaly_test.txt"][1] | {S.key_of(k) for k in ANN}
+    print(f"Khoa chuan hoa (bo duoi, dau gach, hoa thuong): train {len(TRAIN_K)}, test {len(TEST_K)}")
+    if TRAIN_K & TEST_K:
+        print(f"!! {len(TRAIN_K & TEST_K)} khoa vua o train vua o test -> xep TEST")
+    ann_not_test = {S.key_of(k) for k in ANN} - LISTS["anomaly_test.txt"][1]
+    if LISTS["anomaly_test.txt"][1] and ann_not_test:
+        print(f"!! {len(ann_not_test)} video co chu thich nhung khong co trong Anomaly_Test.txt")
     new = LISTS["anomaly_train_new.txt"][1]
     if new:
-        a = LISTS["anomaly_train.txt"][1]
-        print("Anomaly_Train_New.txt:", "GIONG HET Anomaly_Train.txt" if new == a else
-              f"KHAC Anomaly_Train.txt (+{len(new - a)} / -{len(a - new)} video) -> KHONG dung")
-    both = TRAIN_L & TEST_L
-    if both:
-        print(f"!! {len(both)} video vua o train vua o test -> xep vao TEST (tranh ro ri): {sorted(both)[:5]}")
-    not_in_test = set(ANN_L) - LISTS["anomaly_test.txt"][1]
-    if LISTS["anomaly_test.txt"][1] and not_in_test:
-        print(f"!! {len(not_in_test)} video co chu thich thoi gian nhung KHONG co trong Anomaly_Test.txt: {sorted(not_in_test)[:5]}")
-    ann_not_listed = {k for k in LISTS["anomaly_test.txt"][1] if not k.startswith("normal") and k not in ANN_L}
-    if ann_not_listed:
-        print(f"!! {len(ann_not_listed)} video bat thuong trong Anomaly_Test.txt KHONG co chu thich thoi gian: "
-              f"{sorted(ann_not_listed)[:5]}")
+        print("Anomaly_Train_New.txt:", "GIONG HET Anomaly_Train.txt" if new == LISTS["anomaly_train.txt"][1]
+              else "KHAC -> khong dung")
 
     vids["fname"] = vids.path.map(os.path.basename)
     fl = vids.fname.str.lower()
-    ucf = vids.source == "ucf"
+    vids["stem"] = vids.path.map(S.key_of)
+    vids["is_aug"] = vids.fname.map(S.is_augmented) & (vids.source == "ucf")
     vids["split"] = "train"
-    if TRAIN_L or TEST_L:
+    ucf = vids.source == "ucf"
+    UCF_SPLIT = "!! TAM: 80/20 (KHONG co file split)"
+    if TRAIN_K or TEST_K:
         vids.loc[ucf, "split"] = "ngoai_ds"
-        vids.loc[ucf & fl.isin(TRAIN_L), "split"] = "train"
-        vids.loc[ucf & fl.isin(TEST_L), "split"] = "test"
+        vids.loc[ucf & vids.stem.isin(TRAIN_K), "split"] = "train"
+        nrm_folder_test = vids.path.map(lambda p: "testingnormal" in re.sub("[^a-z0-9]", "", p.lower()))
+        vids.loc[ucf & (vids.cls == "Normal") & nrm_folder_test & ~vids.stem.isin(TRAIN_K), "split"] = "test"
+        vids.loc[ucf & vids.stem.isin(TEST_K), "split"] = "test"
         if USE_UNLISTED_UCF:
             vids.loc[ucf & (vids.split == "ngoai_ds"), "split"] = "train"
-        UCF_SPLIT = "danh sach chinh thuc (Anomaly_Train/Normal_Train/Anomaly_Test + chu thich thoi gian)"
+        UCF_SPLIT = "danh sach chinh thuc"
     else:
         h = vids.key.map(lambda k: int(hashlib.md5(k.encode()).hexdigest(), 16) % 5)
         vids.loc[ucf & (h == 0), "split"] = "test"
-        UCF_SPLIT = "!! TAM: bam 80/20 (KHONG co file split / chu thich -> khong tinh duoc AUC muc frame)"
+
+    nf = vids[ucf & (vids.cls == "Normal")]
+    print(f"Normal UCF tim thay: {len(nf)} video, theo thu muc: {nf.top.value_counts().to_dict()}")
+    n_list = len(LISTS["normal_train.txt"][1])
+    print(f"  Normal UCF khop Normal_Train.txt: {int(nf.stem.isin(LISTS['normal_train.txt'][1]).sum())} / {n_list} dong trong danh sach")
+    print(f"  Normal UCF o test (thu muc Testing_Normal hoac chu thich): {int((nf.split == 'test').sum())}")
+    if len(nf):
+        print("  vi du ten file Normal:", nf.fname.head(5).tolist())
+    n_aug_all = int(vids.is_aug.sum())
+    aug_base_test = int((vids.is_aug & vids.fname.map(S.base_of).isin(TEST_K)).sum())
+    print(f"Video augment (hau to A/flip...): {n_aug_all}; ban goc cua chung nam trong test: {aug_base_test}")
 
     rwf = vids.source == "rwf"
     in_val = vids.path.str.lower().str.contains("/val/") | vids.path.str.lower().str.contains("/test/")
@@ -307,6 +326,20 @@ CELLS_04 = [
             sub = vids[miss].sort_values("fname")
             _, te = train_test_split(sub.index, test_size=0.2, stratify=sub.cls, random_state=SEED)
             vids.loc[te, "split"] = "test"
+    vids = vids[~vids.is_aug].reset_index(drop=True)
+    ucf = vids.source == "ucf"
+    print(f"Da bo {n_aug_all} video augment khoi train va test")
+    vids["minutes"] = np.minimum(vids.dur_s, S.MAX_SEC) / 60
+    vids["is_norm"] = vids.group == CFG["normal_group"]
+    tm = (vids.split == "train") & vids.train_use
+    tot = vids[tm].groupby("is_norm").minutes.sum()
+    vids["train_w"] = 0.0
+    for flag in (True, False):
+        sel = tm & (vids.is_norm == flag)
+        if sel.any() and tot.get(flag, 0) > 0:
+            vids.loc[sel, "train_w"] = 0.5 * vids.loc[sel, "minutes"] / tot[flag]
+    print(f"Can bang theo phut (train_w, moi nhom tong 0.5): binh thuong {tot.get(True, 0):.1f} phut, "
+          f"bat thuong {tot.get(False, 0):.1f} phut -> lay mau ti le train_w")
     print("UCF :", UCF_SPLIT)
     print("RWF : thu muc train / val")
     print("RLVS:", RLVS_SPLIT)
@@ -319,14 +352,13 @@ CELLS_04 = [
     pd.DataFrame(ann_rows, columns=["fname", "cls", "s1", "e1", "s2", "e2", "co_trong_du_lieu"]).to_csv(
         os.path.join(WORK, "ucf_annotation.csv"), index=False)
 
-    u = vids[ucf]
+    u = vids[vids.source == "ucf"]
     per = pd.crosstab(u.cls, u.split).reindex(columns=["train", "test", "ngoai_ds"], fill_value=0)
-    listed = pd.Series({n: (S.detect_class(n, INDEX) or "?") for n in TRAIN_L | TEST_L})
-    per["trong_ds_train"] = listed[listed.index.isin(TRAIN_L - TEST_L)].value_counts()
-    per["trong_ds_test"] = listed[listed.index.isin(TEST_L)].value_counts()
-    per = per.fillna(0).astype(int)
-    per["thieu_train"] = (per.trong_ds_train - per.train).clip(lower=0)
-    per["thieu_test"] = (per.trong_ds_test - per.test).clip(lower=0)
+    per["phut_train"] = u[u.split == "train"].groupby("cls").minutes.sum().round(1)
+    per["phut_test"] = u[u.split == "test"].groupby("cls").minutes.sum().round(1)
+    per = per.fillna(0)
+    have_keys = set(u.stem)
+    print(f"Trong danh sach nhung KHONG co trong du lieu: train {len(TRAIN_K - have_keys)}, test {len(TEST_K - have_keys)}")
     print("== UCF: so video train / test theo lop (co trong du lieu) so voi danh sach chinh thuc")
     display(per)
     nrm = u.cls == "Normal"
@@ -558,6 +590,37 @@ CELLS_04 = [
         print(f"  -> UOC TINH chay day du: ~{est / 60:.1f} phut ({est / 3600:.1f} gio)", end="")
         sessions = int(np.ceil(est / 3600 / MAX_HOURS))
         print(f" -> {'vua 1 phien Kaggle' if sessions <= 1 else f'can ~{sessions} phien (Add Input output de chay tiep)'}")
+    """),
+    md("""
+    ## 7b. Đoạn cố định 32 (kiểu Sultani, KHÔNG đệm 0)
+    Mỗi video (train/test, không tính augment) -> 32 đoạn theo thời gian, đặc trưng đoạn = trung bình các frame trong đoạn.
+    Video dài hơn 32 frame: chia đều; video ngắn hơn 32 frame: lấy frame lặp theo lưới đều (không đệm 0).
+    Ghi `scene_seg32/<key>.npy` (32 × 960, float16). Notebook 05 đọc các file này.
+    """),
+    code("""
+    SEG_DIR = os.path.join(WORK, "scene_seg32_quick" if QUICK else "scene_seg32")
+    os.makedirs(SEG_DIR, exist_ok=True)
+
+    def seg32(f):
+        n = len(f)
+        if n >= 32:
+            e = np.linspace(0, n, 33).astype(int)
+            return np.stack([f[e[i]:max(e[i] + 1, e[i + 1])].astype(np.float32).mean(0) for i in range(32)])
+        return f[np.linspace(0, n - 1, 32).round().astype(int)].astype(np.float32)
+
+    n_seg, n_skip = 0, 0
+    for k in vids[vids.split != "ngoai_ds"].key:
+        src, dst = os.path.join(FEATS, k + ".npy"), os.path.join(SEG_DIR, k + ".npy")
+        if not os.path.exists(src):
+            n_skip += 1
+            continue
+        if os.path.exists(dst):
+            continue
+        g = seg32(np.load(src))
+        assert np.isfinite(g).all() and (np.abs(g).sum(1) > 0).all(), k
+        np.save(dst, g.astype(np.float16))
+        n_seg += 1
+    print(f"Doan 32: ghi {n_seg} video moi, bo qua {n_skip} video chua co dac trung (QUICK chi co mot phan)")
     """),
     md("## 8. Tổng hợp `scene_meta.csv` + kiểm tra"),
     code("""
