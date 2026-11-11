@@ -42,6 +42,8 @@ class EventManager:
         self.cooldown, self.fight_hold, self.fall_upgrade = cooldown_sec, fight_hold_sec, fall_upgrade_sec
         self.panic_hold = panic_hold_sec
         self.last_panic = -1e9   # t lần cuối có HOẢNG LOẠN (kể cả khi bị cooldown)
+        for d in self.detectors:
+            getattr(d, "attach", lambda ds: None)(self.detectors)
         self.last_fight = {}     # id -> t lần cuối nằm trong ĐÁNH NHAU
         self.last_fall = {}      # id -> t lần cuối TÉ NGÃ
         self.last_sent = {}      # (type, frozenset(ids)) -> t lần cuối đã báo

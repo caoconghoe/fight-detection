@@ -197,6 +197,81 @@ def test_no_vertical_speed_at_bottom_edge_and_alert_kept():
     assert 1 in det.fired
 
 
+def test_standing_jittery_scale_has_no_vertical_speed():
+    """Đứng yên, L mỗi frame dao động ngẫu nhiên ±10% (như YOLO thật) -> tốc độ dọc = 0 (min_scale_change)."""
+    def scene(t, rng):
+        tr = body((960, 600), 60, "front", rng=rng)
+        k = tr["kpts"]
+        hip = k[[11, 12], :2].mean(0)
+        k[:, :2] = hip + (k[:, :2] - hip) * rng.uniform(0.9, 1.1)
+        tr["box"] = np.array([k[:, 0].min() - 6, k[:, 1].min() - 6, k[:, 0].max() + 6, k[:, 1].max() + 6], np.float32)
+        return {1: tr}
+    # Nhiễu trắng ±10% mỗi frame: đường khớp 1 s còn lệch σ ≈ 0.047 nên ~0.1% cửa sổ vẫn vượt 0.15 (lẻ tẻ 1–2 tick);
+    # tốc độ tổng là trung vị 1 s nên không bị ảnh hưởng. Kiểm tra: vd = 0 ở ≥ 99.5% cửa sổ, tổng luôn < 1 thân/s.
+    vds, raw, vts = [], [], []
+    for seed in range(20):
+        det = RunningDetector(fps=FPS)
+        frame = np.zeros((*FRAME, 3), np.uint8)
+        rng = np.random.default_rng(seed)
+        for i in range(int(6 * FPS)):
+            t = i / FPS
+            assert det.update(frame, scene(t, rng), t) == []
+            d = det.dbg.get(1, {})
+            if d.get("vd") is not None:
+                vds.append(d["vd"])
+                vts.append(d["vt"])
+                raw.append(F / d["L"] * abs(d["slope"]))
+    vds = np.array(vds)
+    assert np.mean(vds > 0) <= 0.005, np.mean(vds > 0)
+    assert max(vts) < 1.0, max(vts)
+    assert np.percentile(raw, 95) > 1.5, np.percentile(raw, 95)   # không có ngưỡng thì nhiễu đã cho tốc độ dọc đáng kể
+
+
+class FightStub(Detector):
+    """Giả lập detector fight: ema[(a, b)] = ema_fn(t), cập nhật trước running mỗi tick (như thứ tự trong config)."""
+    name = "fight"
+
+    def __init__(self, ema_fn):
+        super().__init__(FPS)
+        self.ema_fn, self.ema = ema_fn, {}
+
+    def update(self, frame, tracks, t):
+        self.ema = {(1, 2): self.ema_fn(t)}
+        return []
+
+
+def run_with_fight(scene, ema_fn, secs):
+    em = EventManager([FightStub(ema_fn), RunningDetector(fps=FPS)], panic_hold_sec=10.0)
+    frame = np.zeros((*FRAME, 3), np.uint8)
+    rng = np.random.default_rng(1)
+    out = []
+    for i in range(int(secs * FPS)):
+        t = i / FPS
+        out += [(round(t, 2), e["type"], e["ids"]) for e in em.update(frame, scene(t, rng), t)[0]]
+    return out
+
+
+def test_no_run_alert_while_fighting():
+    """ID 1 di chuyển nhanh, có động tác chân (vờn / đuổi đánh) nhưng cặp (1, 2) có EMA đánh nhau 0.8 -> không báo."""
+    def scene(t, rng):
+        return {1: body((300 + 8 * 40 * t, 600), 40, "side", t, 1.4, 35, 90, rng=rng),
+                2: body((340 + 8 * 40 * t, 600), 40, "side", t, 1.4, 35, 90, rng=rng)}
+    assert run_with_fight(scene, lambda t: 0.8, 4.5) == []
+    assert len(run_with_fight(scene, lambda t: 0.1, 4.5)) == 2       # cùng cảnh, không đánh nhau -> có báo
+
+
+def test_run_away_after_fight_alerts():
+    """Đánh nhau tại chỗ tới 3 s (EMA 0.8), sau đó EMA hạ 0.2 và ID 1 chạy đi -> báo, nhưng không sớm hơn 3 + 2 s."""
+    def scene(t, rng):
+        x1 = 300 + 8 * 40 * max(0.0, t - 3.0)
+        cad = 1.4 if t >= 3.0 else 0.0
+        return {1: body((x1, 600), 40, "side", t, cad, 35, 90, rng=rng),
+                2: body((260, 600), 40, "side", rng=rng)}
+    ev = run_with_fight(scene, lambda t: 0.8 if t < 3.0 else 0.2, 7.5)
+    assert [(e[1], e[2]) for e in ev] == [(RUN, [1])], ev
+    assert ev[0][0] >= 5.0, ev
+
+
 class Stub(Detector):
     def __init__(self, script):
         super().__init__(FPS)

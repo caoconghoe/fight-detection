@@ -4,7 +4,8 @@ Chạy đúng pipeline realtime (YOLO-pose + ByteTrack mọi frame, lấy mẫu 
 detectors.running trong config.yaml), KHÔNG hiển thị. Mỗi giây video in 1 dòng cho từng ID:
   L (px), tốc độ ngang / dọc / tổng (thân L/giây, trung vị trong giây đó, max trong ngoặc),
   dấu hiệu chân (gối = số lần góc gối đổi chiều, cc = khoảng cách 2 cổ chân đổi chiều, lp = nhịp luân phiên; lấy max),
-  hướng, và lý do không đo được (thiếu hông/gối, ID mới, chạm mép dưới...).
+  hướng, và lý do không đo được (thiếu hông/gối, ID mới, chạm mép dưới, đang đánh nhau...).
+Detector đánh nhau (nếu bật trong config) chạy kèm, như realtime, để chặn chạy khi EMA đánh nhau ≥ fight_suppress.
 Ghi thêm CSV từng tick vào realtime/events/speed_probe_<tên video>.csv.
 
 Chạy (từ thư mục httm):  python realtime/tools/speed_probe.py <video> [--config ...] [--max-sec 120]
@@ -24,6 +25,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from core.camera import Camera  # noqa: E402
 from core.pose import PoseTracker  # noqa: E402
+from core.events import build_detectors  # noqa: E402
 from detectors.running import RunningDetector  # noqa: E402
 from shared.sampling import FpsSampler  # noqa: E402
 
@@ -74,6 +76,10 @@ def main():
     params = dict(cfg["detectors"].get("running") or {})
     params.pop("enabled", None)
     det = RunningDetector(fps=cfg["sample_fps"], full_body=cfg.get("full_body"), **params)
+    fcfg = {**cfg, "detectors": {k: v for k, v in cfg["detectors"].items() if k == "fight"}}
+    with contextlib.redirect_stdout(io.StringIO()):
+        fight = build_detectors(fcfg)
+    det.attach(fight)
     cam = Camera(a.video, file_realtime=False)
     sampler = FpsSampler(cfg["sample_fps"])
     print(f"Video: {cam.name} | {cam.width}x{cam.height} | {cam.fps:.1f} FPS | nguong tong {det.speed_thr} than/s, "
@@ -84,7 +90,7 @@ def main():
     fcsv = open(out, "w", newline="", encoding="utf-8-sig")
     w = csv.writer(fcsv)
     w.writerow(["t", "id", "L", "ngang", "doc", "tong", "goi", "co_chan", "luan_phien", "chan_dat", "huong",
-                "on_dinh", "giu_s", "trang_thai"])
+                "on_dinh", "dlnL", "giu_s", "trang_thai"])
     sec, per_id, n_events = None, defaultdict(list), 0
 
     def flush(s):
@@ -104,6 +110,8 @@ def main():
         if sec is not None and int(t) != sec:
             flush(sec)
         sec = int(t)
+        for f_det in fight:
+            f_det.update(frame, tracks, t)
         for e in det.update(frame, tracks, t):
             n_events += 1
             print(f"  >>> {t:6.2f} s  {e['type']} ID {e['ids']} | {e['detail']}")
@@ -115,9 +123,9 @@ def main():
             if "vt" in d:
                 w.writerow([f"{t:.3f}", tid, f"{d['L']:.1f}", f"{d['vh']:.2f}", fmt(d["vd"], 2), f"{d['vt']:.2f}",
                             d["knee_sw"], d["ank_sw"], d["alt"], int(d["legs"]), d["mode"], int(d["stable"]),
-                            f"{d.get('held', 0):.2f}", d.get("state", "")])
+                            fmt(d.get("dlnL"), 3), f"{d.get('held', 0):.2f}", d.get("state", "")])
             else:
-                w.writerow([f"{t:.3f}", tid] + [""] * 11 + [d.get("why", "")])
+                w.writerow([f"{t:.3f}", tid] + [""] * 12 + [d.get("why", "")])
     flush(sec)
     cam.release()
     fcsv.close()

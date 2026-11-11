@@ -7,7 +7,10 @@ Với mỗi ID (dữ liệu vào 15 FPS):
 - Tốc độ DỌC (lại gần / ra xa camera) = (f / L) × |hệ số góc của ln(L) theo thời gian trong 1 s|,
   f = chiều cao ảnh / (2·tan(vfov/2)). (Khoảng cách Z = f·L_thật/L_px ⇒ |dZ/dt| / L_thật = (f/L)·|d ln L/dt|.)
 - Tốc độ TỔNG = √(ngang² + dọc²) từng frame, lấy trung vị trong 1 s.
+  Chỉ tính tốc độ dọc khi L đổi đủ nhiều trong cửa sổ: |ln(L_cuối / L_đầu)| ≥ min_scale_change, với L_đầu / L_cuối
+  lấy trên đường thẳng khớp ln(L) (không lấy 2 frame đơn lẻ – mỗi frame L rung ±10%); không đạt -> tốc độ dọc = 0.
 Báo khi cùng lúc, liên tục ≥ min_sec: tổng > speed_thr; có động tác chân; hướng ổn định. Xem __init__ cho từng ngưỡng.
+Không báo cho ID thuộc cặp có EMA đánh nhau ≥ fight_suppress, và trong fight_suppress_sec sau khi cặp hạ dưới mức đó.
 """
 import math
 from collections import deque
@@ -92,7 +95,7 @@ class RunningDetector(Detector):
     def __init__(self, fps=15, speed_thr=4.5, min_sec=1.0, win_sec=1.0, camera_vfov_deg=50.0,
                  seg_conf=0.5, seg_max_dev=0.4, need_conf=0.5, ankle_conf=0.5,
                  knee_amp_deg=35.0, ankle_amp=0.6, leg_swings=2, alt_beats=2, alt_hyst=0.1,
-                 straight_min=0.6, depth_sign_ratio=0.8,
+                 straight_min=0.6, depth_sign_ratio=0.8, min_scale_change=0.15, fight_suppress=0.4, fight_suppress_sec=2.0,
                  jump_body=3.0, min_track_sec=1.0, shake_min_people=3, shake_ratio=0.7, shake_min_move=0.5,
                  cooldown_sec=10.0, default_height=720, **kw):
         super().__init__(fps, **kw)
@@ -105,6 +108,10 @@ class RunningDetector(Detector):
         self.alt_beats, self.alt_hyst = alt_beats, alt_hyst
         # hướng ổn định: ngang = |dịch chuyển ròng| / quãng đường ≥ straight_min; dọc = dấu ln(L) giữ ≥ depth_sign_ratio
         self.straight_min, self.depth_sign_ratio = straight_min, depth_sign_ratio
+        self.min_scale_change = min_scale_change
+        # đang đánh nhau (EMA của detector fight) -> không báo chạy
+        self.fight_suppress, self.fight_suppress_sec = fight_suppress, fight_suppress_sec
+        self.fight, self.fight_t = None, {}                 # detector fight (gắn qua attach), id -> t lần cuối EMA ≥ mức
         # chặn báo nhầm
         self.jump_body, self.min_track = jump_body, min_track_sec
         self.shake_min_people, self.shake_ratio, self.shake_min_move = shake_min_people, shake_ratio, shake_min_move
@@ -156,7 +163,9 @@ class RunningDetector(Detector):
             slope = float(np.polyfit(ts - ts[0], [x["lnL"] for x in win], 1)[0])
             f = H / (2 * math.tan(self.vfov / 2))
             s["slope"] = slope
-            s["vd"] = f / float(np.median([x["L"] for x in win])) * abs(slope)
+            s["dlnL"] = abs(slope) * float(ts[-1] - ts[0])  # |ln(L_cuối / L_đầu)| trên đường khớp
+            s["vd"] = (f / float(np.median([x["L"] for x in win])) * abs(slope)
+                       if s["dlnL"] >= self.min_scale_change else 0.0)
         return None
 
     def _measure(self, tid, t):
@@ -193,7 +202,7 @@ class RunningDetector(Detector):
             mode, stable = "ngang", straight >= self.straight_min
         return dict(L=Lm, vh=vh, vd=vd, vt=vt, knee_sw=knee_sw, ank_sw=ank_sw, alt=alt, legs=legs,
                     mode=mode, stable=stable, straight=straight, net=net / Lm, edge=cur["edge"],
-                    slope=cur["slope"])
+                    slope=cur["slope"], dlnL=cur.get("dlnL"))
 
     def _reset_run(self, tid):
         self.run_start.pop(tid, None)
@@ -227,11 +236,25 @@ class RunningDetector(Detector):
         return same / len(meas) >= self.shake_ratio
 
     # ---------- giao diện Detector ----------
+    def attach(self, detectors):
+        self.fight = next((d for d in detectors if d.name == "fight"), None)
+
+    def _fighting(self, t):
+        """Cập nhật thời điểm từng ID thuộc cặp có EMA đánh nhau ≥ fight_suppress; trả về tập ID đang bị chặn."""
+        if self.fight is not None:
+            for pair, e in getattr(self.fight, "ema", {}).items():
+                if e >= self.fight_suppress:
+                    for i in pair:
+                        self.fight_t[i] = t
+        self.fight_t = {i: v for i, v in self.fight_t.items() if t - v <= self.fight_suppress_sec + 1e-6}
+        return set(self.fight_t)
+
     def update(self, frame, tracks, t):
         for tid in self.gone_ids(tracks, t):
             for d in (self.hist, self.first_t, self.dbg, self.last_fire):
                 d.pop(tid, None)
             self._reset_run(tid)
+        fighting = self._fighting(t)
         H = frame.shape[0] if frame is not None else self.default_h
         meas, why = {}, {}
         for tid, tr in tracks.items():
@@ -260,6 +283,11 @@ class RunningDetector(Detector):
             m = dict(m)
             if m["edge"]:                               # chân chạm mép dưới: dừng đo dọc, giữ nguyên trạng thái
                 m["state"] = "mep duoi (giu)"
+                self.dbg[tid] = m
+                continue
+            if tid in fighting:                         # đang / vừa đánh nhau: không tính chạy, chuỗi chạy làm lại
+                self._reset_run(tid)
+                m["held"], m["state"] = 0.0, "danh nhau (chan)"
                 self.dbg[tid] = m
                 continue
             fast = m["vt"] > self.speed_thr

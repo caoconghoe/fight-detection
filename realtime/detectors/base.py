@@ -41,6 +41,9 @@ class Detector:
         Trả về list sự kiện vừa XÁC NHẬN (không trả lặp mỗi frame)."""
         return []
 
+    def attach(self, detectors):
+        """(tuỳ chọn) EventManager gọi 1 lần với danh sách mọi detector – để dùng kết quả của detector khác."""
+
     def highlight_ids(self):
         """(tuỳ chọn) ID cần tô đỏ trên màn hình, vd cặp đang đánh nhau."""
         return set()

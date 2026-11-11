@@ -125,6 +125,9 @@ detectors:
     alt_hyst: 0.1               # ... chênh độ cao 2 cổ chân phải vượt ±N × L mới tính 1 nhịp
     straight_min: 0.6           # hướng ngang ổn định: dịch chuyển ròng / quãng đường trong 1 s ≥ N
     depth_sign_ratio: 0.8       # hướng dọc ổn định: dấu hệ số góc ln(L) giữ nguyên ở ≥ N số frame trong 1 s
+    min_scale_change: 0.15      # chỉ tính tốc độ dọc khi |ln(L_cuối / L_đầu)| trong cửa sổ ≥ N (trên đường khớp), không thì = 0
+    fight_suppress: 0.4         # ID thuộc cặp có EMA đánh nhau ≥ N -> không báo chạy ...
+    fight_suppress_sec: 2.0     # ... và thêm N giây sau khi cặp hạ dưới mức đó
     jump_body: 3.0              # hông nhảy > N × L trong 1 frame -> coi là nhảy ID, đo lại từ đầu
     min_track_sec: 1.0          # ID mới xuất hiện < N giây chưa tính
     shake_min_people: 3         # có ≥ N người có số liệu ...
