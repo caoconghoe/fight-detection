@@ -53,7 +53,8 @@ def main():
                   f"-> se KHONG co cua so nao")
     print("Detector:", ", ".join(d.name for d in manager.detectors) or "(chua co)")
     uc = cfg["ui"]
-    ui = UI(uc["font_size"], uc["kpt_conf"], uc["panel_width"], uc["new_sec"])
+    ui = UI(uc["font_size"], uc["kpt_conf"], uc["panel_width"], uc["new_sec"], uc.get("alert_sec", 5.0))
+    scene_det = next((d for d in manager.detectors if d.name == "scene" and getattr(d, "scorer", None)), None)
     win = uc["window"]
     snap_dir = ROOT / cfg["snapshot_dir"]
     print(f"Nguon: {cam.name} | backend: {cam.backend} | {cam.width}x{cam.height} | FPS khai bao: {cam.fps:.1f}")
@@ -82,7 +83,7 @@ def main():
     proc, samp = FpsMeter(), FpsMeter()           # số vòng lặp xử lý / số frame lấy mẫu mỗi giây
     t_first = t_now = start = None
     loop_t = time.perf_counter()
-    status, status_t = [], 0.0
+    status, status_t = {}, 0.0
     debug_on = False                              # phím d: hiện bộ đếm từng luật trên khung mỗi người
     db = EventDB(ROOT / cfg["db_path"])
     rc = dict(cfg.get("recorder") or {})
@@ -127,12 +128,11 @@ def main():
 
             if now - status_t >= 0.5:             # cập nhật chữ trạng thái 2 lần/giây (panel được cache)
                 status_t = now
-                status = [f"Camera: {cam.meter.value:.1f} FPS  |  Xử lý: {proc.value:.1f} FPS",
-                          f"YOLO: {pose_ms:.0f} ms  |  Lấy mẫu: {samp.value:.1f} FPS",
-                          f"Số người: {len(tracks)}",
-                          f"Nguồn: {cam.name}"]
+                status = {"cam_fps": cam.meter.value, "proc_fps": proc.value, "yolo_ms": pose_ms,
+                          "people": len(tracks), "source": cam.name,
+                          "scene": None if scene_det is None else (scene_det.last_score, scene_det.threshold)}
                 if debug_on:
-                    status += ["DEBUG (phím d để tắt)"] + manager.debug({})[1]
+                    status["debug"] = [f"DEBUG (phím d để tắt) · lấy mẫu {samp.value:.1f} FPS"] + manager.debug({})[1]
             dbg = manager.debug(tracks)[0] if debug_on else None
             view = ui.draw(frame, tracks, status, alerts, highlight, debug=dbg)
             if recorder:
