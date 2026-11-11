@@ -24,6 +24,7 @@ ui:
   panel_width: 360              # panel bên phải (pixel, ở video cao 540; tự phóng theo độ phân giải)
   new_sec: 10                   # cảnh báo trong vòng N giây được tô đỏ là "mới"
   alert_sec: 5                  # cảnh báo trong vòng N giây: băng cảnh báo trên video + viền nhấp nháy
+  min_height: 540               # video thấp hơn N px (vd UCF 320x240) được phóng lên để panel đủ chỗ, chữ nét
   window: "HTTM - Giam sat (q: thoat, s: chup anh, d: debug)"
 
 snapshot_dir: events/snapshots

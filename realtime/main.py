@@ -53,7 +53,8 @@ def main():
                   f"-> se KHONG co cua so nao")
     print("Detector:", ", ".join(d.name for d in manager.detectors) or "(chua co)")
     uc = cfg["ui"]
-    ui = UI(uc["font_size"], uc["kpt_conf"], uc["panel_width"], uc["new_sec"], uc.get("alert_sec", 5.0))
+    ui = UI(uc["font_size"], uc["kpt_conf"], uc["panel_width"], uc["new_sec"], uc.get("alert_sec", 5.0),
+            uc.get("min_height", 540))
     scene_det = next((d for d in manager.detectors if d.name == "scene" and getattr(d, "scorer", None)), None)
     win = uc["window"]
     snap_dir = ROOT / cfg["snapshot_dir"]

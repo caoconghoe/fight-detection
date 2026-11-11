@@ -70,7 +70,8 @@ def _fmt(v, nd=1, unit=""):
 
 
 class UI:
-    def __init__(self, font_size=18, kpt_conf=0.3, panel_width=360, new_sec=10.0, alert_sec=5.0):
+    def __init__(self, font_size=18, kpt_conf=0.3, panel_width=360, new_sec=10.0, alert_sec=5.0, min_height=540):
+        self.min_height = min_height                        # video thấp hơn -> phóng lên trước khi vẽ (panel đủ chỗ, chữ nét)
         self.font_size, self.panel_width = font_size, panel_width
         self.kpt_conf, self.new_sec, self.alert_sec = kpt_conf, new_sec, alert_sec
         self.fonts = {}
@@ -308,12 +309,20 @@ class UI:
 
     # ================= ghép =================
     def draw(self, frame, tracks, status=None, alerts=(), highlight=(), now=None, debug=None):
-        """Vẽ lên frame (tại chỗ) và trả về ảnh mới = [video | panel].
+        """Vẽ lên frame (tại chỗ; video thấp hơn min_height thì vẽ trên bản phóng to) và trả về ảnh mới
+        = [video | panel].
         status: dict số liệu {cam_fps, proc_fps, yolo_ms, people, source, scene: (điểm|None, ngưỡng) | None,
                 debug: [dòng]} (list chuỗi kiểu cũ vẫn nhận, hiện ở mục debug);
         alerts: list sự kiện (mục 5.2, có 'time', 't'), mới nhất trước;
         debug: {tid: [dòng chữ]} hiện trên khung từng người (chế độ debug) hoặc None."""
         now = time.time() if now is None else now
+        H0, W0 = frame.shape[:2]
+        if H0 < self.min_height:                              # video nhỏ (vd UCF 320x240): phóng lên, quy đổi toạ độ
+            f = self.min_height / H0
+            frame = cv2.resize(frame, (round(W0 * f), self.min_height), interpolation=cv2.INTER_LINEAR)
+            tracks = {tid: {"box": tr["box"] * f,
+                            "kpts": np.column_stack([tr["kpts"][:, :2] * f, tr["kpts"][:, 2]])}
+                      for tid, tr in tracks.items()}
         alerts = list(alerts)
         st = dict(status) if isinstance(status, dict) else {"debug": list(status or [])}
         active = [e for e in alerts if now - e.get("t", 0) <= self.alert_sec]
