@@ -88,11 +88,15 @@ Tuỳ chọn: `--no-show` (không mở cửa sổ), `--frames N` (dừng sau N f
 1. Cài app *IP Webcam* → kéo xuống cuối → **Start server**.
 2. App hiện địa chỉ, ví dụ `http://192.168.1.5:8080` → chạy `python realtime/main.py http://192.168.1.5:8080/video`.
 
-**DroidCam (Android / iOS)**
-- Cách 1 (không cần cài gì trên máy tính): mở app, xem *WiFi IP* và *Port* (mặc định 4747) →
-  `python realtime/main.py http://192.168.0.101:4747/video`.
-- Cách 2: cài thêm *DroidCam Client* trên Windows → điện thoại thành webcam ảo → `python realtime/main.py 1`
-  (thử `2` nếu `1` là camera khác).
+**DroidCam (iPhone / Android) – phải dùng DroidCam Client trên Windows**
+1. Trên điện thoại: mở app DroidCam, ghi lại *WiFi IP* và *Port* (mặc định 4747).
+2. Trên máy tính: cài **DroidCam Client** (miễn phí, droidcam.com), mở ra, nhập đúng IP và Port, bấm *Start*.
+   Điện thoại và máy tính phải cùng Wi-Fi.
+3. DroidCam Client tạo một **webcam ảo**. Chạy `python realtime/main.py 1` (thử `0`, `2` nếu số khác là webcam laptop).
+
+Lưu ý: DroidCam **không** phát luồng `http://…/video` cho trình duyệt như IP Webcam; địa chỉ `IP:4747` chỉ dùng cho DroidCam Client.
+
+**IP Webcam (Android)**: cài app, *Start server*, rồi `python realtime/main.py http://<ip>:8080/video`.
 
 Nếu mất tín hiệu quá 3 s chương trình tự dừng và lưu phiên làm việc.
 
