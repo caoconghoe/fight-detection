@@ -68,6 +68,9 @@ CELLS_05 = [
     sys.path.insert(0, os.getcwd())
     import scene as S
     importlib.reload(S)
+    RETRAIN = False           # False: neu co scene_head.pt trong Add Input thi KHONG huan luyen lai, chi danh gia
+    _pts = sorted(glob.glob(os.path.join(INPUT, "**", "scene_head.pt"), recursive=True))
+    LOAD_PT = _pts[0] if (_pts and not RETRAIN) else None
     CFG = json.load(open("scene_groups.json", encoding="utf-8"))
     NORMAL = CFG["normal_group"]
     ABN_GROUPS = [g for g in CFG["groups"] if g != NORMAL]
@@ -181,6 +184,12 @@ CELLS_05 = [
     model = WinHead().to(DEVICE)
     opt = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=WD)
     n_ep, n_st = (QUICK_EPOCHS, QUICK_STEPS) if QUICK else (EPOCHS, STEPS)
+    if LOAD_PT:
+        ck = torch.load(LOAD_PT, map_location=DEVICE, weights_only=False)
+        model.load_state_dict(ck["model"])
+        MU, SD = np.asarray(ck["mu"]), np.asarray(ck["sd"])
+        n_ep = 0
+        print("Dung scene_head.pt da huan luyen (khong huan luyen lai):", LOAD_PT)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=n_ep * n_st)
     ce = nn.CrossEntropyLoss()
     t0 = time.time()
@@ -206,7 +215,7 @@ CELLS_05 = [
         m = np.mean(tot, 0)
         print(f"epoch {ep + 1}/{n_ep} | loss {m[0]:.4f} | ranking {m[1]:.4f} | nhom {m[2]:.4f} | {time.time() - t0:.0f} s")
     """),
-    md("## 6. Đánh giá (điểm video = cửa sổ lớn nhất; mọi cửa sổ của video)"),
+    md("## 6. Đánh giá: hai cách tính điểm video – max cửa sổ và trung bình top-3 cửa sổ"),
     code("""
     @torch.no_grad()
     def video_scores(r):
@@ -216,34 +225,59 @@ CELLS_05 = [
         return s.cpu().numpy(), g.cpu().numpy()
 
     VS = {int(r): video_scores(int(r)) for r in np.unique(np.r_[TR_NO, TE_UCF_AB, TE_UCF_NO, TE_RWF, TE_RLVS])}
-    vmax = {r: VS[r][0].max() for r in VS}
     vgroup = {r: VS[r][1].mean(0) for r in VS}
+    METHODS = {"max": {r: VS[r][0].max() for r in VS},
+               "top3": {r: float(np.sort(VS[r][0])[-3:].mean()) for r in VS}}   # ít hơn 3 cửa sổ -> trung bình tất cả
 
     def auc(y, s):
         return float(roc_auc_score(y, s)) if len(set(y)) == 2 else float("nan")
 
-    THR = float(np.percentile([vmax[r] for r in TR_NO], 95))    # nguong: 95% phan vi binh thuong train
-    print(f"Nguong (95% phan vi binh thuong train) = {THR:.3f}")
+    # NGUONG GOI Y: chi in ra, KHONG ghi vao config (nguon: 95% phan vi video binh thuong TRAIN)
+    SUGGEST = {m: float(np.percentile([sc[r] for r in TR_NO], 95)) for m, sc in METHODS.items()}
+    print("NGUONG GOI Y (95% phan vi video binh thuong TRAIN = RWF NonFight + RLVS NonViolence; KHONG dat vao config):")
+    for m, t in SUGGEST.items():
+        print(f"  cach {m:5s}: {t:.3f}")
 
+    TAPS = [("UCF test (bat thuong vs Normal ngoai mien)", TE_UCF_AB, TE_UCF_NO),
+            ("RWF test (Fight vs NonFight)", TE_RWF[meta.ab.values[TE_RWF]], TE_RWF[~meta.ab.values[TE_RWF]]),
+            ("RLVS test (Violence vs NonViolence)", TE_RLVS[meta.ab.values[TE_RLVS]], TE_RLVS[~meta.ab.values[TE_RLVS]])]
     rows = []
-    for name, ab_idx, no_idx in [("UCF test (bat thuong vs Normal ngoai mien)", TE_UCF_AB, TE_UCF_NO),
-                                 ("RWF test (Fight vs NonFight)", TE_RWF[meta.ab.values[TE_RWF]], TE_RWF[~meta.ab.values[TE_RWF]]),
-                                 ("RLVS test (Violence vs NonViolence)", TE_RLVS[meta.ab.values[TE_RLVS]],
-                                  TE_RLVS[~meta.ab.values[TE_RLVS]])]:
-        if len(ab_idx) + len(no_idx) == 0:
-            continue
-        y = np.r_[np.ones(len(ab_idx)), np.zeros(len(no_idx))].astype(int)
-        sc = np.array([vmax[r] for r in np.r_[ab_idx, no_idx]])
-        pred = (sc > THR).astype(int)
-        rows.append(dict(tap=name, n_bat_thuong=len(ab_idx), n_binh_thuong=len(no_idx), AUC=auc(y, sc),
-                         F1=f1_score(y, pred, zero_division=0),
-                         bao_nham_tren_binh_thuong=float(pred[y == 0].mean()) if (y == 0).any() else float("nan")))
+    for m, sc_map in METHODS.items():
+        for name, ab_idx, no_idx in TAPS:
+            if len(ab_idx) + len(no_idx) == 0:
+                continue
+            y = np.r_[np.ones(len(ab_idx)), np.zeros(len(no_idx))].astype(int)
+            sc = np.array([sc_map[r] for r in np.r_[ab_idx, no_idx]])
+            pred = (sc > SUGGEST[m]).astype(int)
+            rows.append(dict(cach=m, tap=name, n_bat_thuong=len(ab_idx), n_binh_thuong=len(no_idx), AUC=auc(y, sc),
+                             F1_nguong_goi_y=f1_score(y, pred, zero_division=0),
+                             FPR_binh_thuong=float(pred[y == 0].mean()) if (y == 0).any() else float("nan")))
     res = pd.DataFrame(rows)
-    print("== AUC / F1 theo tung tap test (nguong 95% binh thuong train)")
+    print("== AUC / F1 / FPR theo cach tinh diem va tung tap test")
     display(res.round(3))
-    if len(TE_UCF_NO):
-        fp = float(np.mean([vmax[r] > THR for r in TE_UCF_NO]))
-        print(f"TY LE BAO NHAM tren {len(TE_UCF_NO)} Normal UCF (ngoai mien): {fp:.1%}")
+    for m in METHODS:
+        if len(TE_UCF_NO):
+            fp = float(np.mean([METHODS[m][r] > SUGGEST[m] for r in TE_UCF_NO]))
+            print(f"[{m}] TY LE BAO NHAM tren {len(TE_UCF_NO)} Normal UCF (nguong goi y): {fp:.1%}")
+
+    # AUC va FPR theo nhom do dai (UCF test; FPR tinh tren Normal UCF cung nhom do dai)
+    BINS = [0, 10, 60, 300, S.MAX_SEC]
+    ucf_idx = np.r_[TE_UCF_AB, TE_UCF_NO]
+    ucf_y = np.r_[np.ones(len(TE_UCF_AB)), np.zeros(len(TE_UCF_NO))].astype(int)
+    ucf_len = meta.dur_used.values[ucf_idx]
+    len_rows = []
+    for m, sc_map in METHODS.items():
+        sc = np.array([sc_map[r] for r in ucf_idx])
+        for b in range(len(BINS) - 1):
+            in_b = (ucf_len > BINS[b]) & (ucf_len <= BINS[b + 1]) if b else (ucf_len >= 0) & (ucf_len <= BINS[1])
+            n_ab, n_no = int((in_b & (ucf_y == 1)).sum()), int((in_b & (ucf_y == 0)).sum())
+            len_rows.append(dict(cach=m, do_dai=f"{BINS[b]}-{BINS[b + 1]} s", n_bat_thuong=n_ab, n_binh_thuong=n_no,
+                                 AUC_trong_nhom=auc(ucf_y[in_b], sc[in_b]) if (n_ab and n_no) else float("nan"),
+                                 FPR_binh_thuong=float((sc[in_b & (ucf_y == 0)] > SUGGEST[m]).mean()) if n_no else float("nan"),
+                                 diem_TB_binh_thuong=float(sc[in_b & (ucf_y == 0)].mean()) if n_no else float("nan")))
+    lres = pd.DataFrame(len_rows)
+    print("== Theo nhom do dai (UCF test): AUC trong nhom, FPR tren Normal UCF, diem TB binh thuong")
+    display(lres.round(3))
 
     # AUC muc cua so (~frame) tren UCF test theo chu thich thoi gian
     spans = {}
@@ -275,18 +309,13 @@ CELLS_05 = [
     print("Ti le cua so NGAN (short_clip) theo nhom:", meta.assign(sh=[short_of(r) for r in range(len(meta))])
           .groupby(["ab", "split"]).sh.mean().round(2).to_dict())
     lens = []
-    for name, idx, lab in [("UCF test", np.r_[TE_UCF_AB, TE_UCF_NO], np.r_[np.ones(len(TE_UCF_AB)), np.zeros(len(TE_UCF_NO))]),
+    for name, idx, lab in [("UCF test", ucf_idx, ucf_y),
                            ("RWF test", TE_RWF, meta.ab.values[TE_RWF].astype(int)),
                            ("RLVS test", TE_RLVS, meta.ab.values[TE_RLVS].astype(int))]:
         if len(idx) == 0:
             continue
-        sc = np.array([vmax[r] for r in idx])
-        print(f"{name}: AUC chi dung DO DAI = {auc(lab, meta.dur_used.values[idx]):.3f}  (AUC mo hinh = {auc(lab, sc):.3f})")
-        lens.append(pd.DataFrame(dict(tap=name, nhan=lab, do_dai=pd.cut(meta.dur_used.values[idx], [0, 10, 60, 300, S.MAX_SEC]),
-                                      diem=sc)))
-    if lens:
-        print("== Diem trung binh theo do dai clip (kiem tra loi tat)")
-        display(pd.concat(lens).groupby(["tap", "nhan", "do_dai"], observed=True).diem.agg(["count", "mean"]).round(3))
+        sc = np.array([METHODS["max"][r] for r in idx])
+        print(f"{name}: AUC chi dung DO DAI = {auc(lab, meta.dur_used.values[idx]):.3f}  (AUC mo hinh cach max = {auc(lab, sc):.3f})")
     """),
     md("## 7. Xuất `scene_head.onnx` (input 16×960), `scene_backbone.onnx`, `scene_config.json`"),
     code(BACKBONE_SRC),
@@ -329,7 +358,7 @@ CELLS_05 = [
 
     cfg_out = {"fps": S.FPS, "size": S.SIZE, "feat_dim": S.FEAT_DIM, "window": WIN, "stride": STRIDE,
                "window_note": "realtime: 16 vector backbone lien tiep (2 FPS = 8 s) -> chuan hoa (mean/std) -> scene_head",
-               "groups_abnormal": ABN_GROUPS, "normal_group": NORMAL, "threshold": THR,
+               "groups_abnormal": ABN_GROUPS, "normal_group": NORMAL, "threshold_note": "khong dat nguong cuoi; nguong goi y in trong log danh gia",
                "mean": MU.tolist(), "std": SD.tolist(), "trained_on": "UCF train + RWF NonFight + RLVS NonViolence",
                "quick": QUICK, "results": res.to_dict("records")}
     with open(os.path.join(WORK, "scene_config.json"), "w", encoding="utf-8") as f:
