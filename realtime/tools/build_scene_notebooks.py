@@ -228,17 +228,17 @@ CELLS_04 = [
     USE_UNLISTED_UCF = False      # True: video UCF ngoài danh sách chính thức được đưa vào train
 
     import re
-    def read_keys(text):
+    def read_keys(text, normal=False):
         out = set()
         for ln in text.splitlines():
             tok = ln.split()
             if tok and tok[0].lower() not in ("name", "file"):
-                out.add(S.key_of(tok[0]))
+                out.add(S.list_key(tok[0], normal))
         return out
 
     def read_lists(name):
         fs = sorted(TXT.get(name, []))
-        sets = [read_keys(open(f, encoding="utf-8", errors="ignore").read()) for f in fs]
+        sets = [read_keys(open(f, encoding="utf-8", errors="ignore").read(), name == "normal_train.txt") for f in fs]
         return fs, set().union(*sets) if sets else set(), all(x == sets[0] for x in sets)
 
     LISTS = {n: read_lists(n) for n in ("anomaly_train.txt", "normal_train.txt", "anomaly_test.txt", "anomaly_train_new.txt")}
@@ -254,7 +254,8 @@ CELLS_04 = [
     for f in ann_paths:
         ANN.update(S.parse_temporal_annotation(open(f, encoding="utf-8", errors="ignore").read()))
     print(f"File chu thich thoi gian: {len(ann_paths)} ban, {len(ANN)} video")
-    TRAIN_K = LISTS["anomaly_train.txt"][1]   # Normal UCF khong co mp4 -> khong dung Normal_Train.txt
+    NORMAL_TRAIN_K = LISTS["normal_train.txt"][1]          # sau khi bo _C va duoi
+    TRAIN_K = LISTS["anomaly_train.txt"][1] | NORMAL_TRAIN_K
     TEST_K = LISTS["anomaly_test.txt"][1] | {S.key_of(k) for k in ANN}
     print(f"Khoa chuan hoa (bo duoi, dau gach, hoa thuong): train {len(TRAIN_K)}, test {len(TEST_K)}")
     if TRAIN_K & TEST_K:
@@ -307,8 +308,17 @@ CELLS_04 = [
         if USE_UNLISTED_UCF:
             vids.loc[ucf & (vids.split == "ngoai_ds"), "split"] = "train"
         nrm_u = ucf & (vids.cls == "Normal")
+        in_trn_folder = vids.path.map(lambda p: "trainingnormal" in _norm_path(p))
+        nrm_test_m = nrm_u & nrm_folder_test
+        nrm_tr_m = nrm_u & (vids.stem.isin(NORMAL_TRAIN_K) | in_trn_folder)
+        print(f"Normal_Train.txt khop: {int(vids.stem[nrm_u].isin(NORMAL_TRAIN_K).sum())} / {len(NORMAL_TRAIN_K)} dong "
+              f"(da bo _C va duoi)")
+        print(f"Normal trong Training-Normal-Videos*: {int((nrm_u & in_trn_folder).sum())} | "
+              f"Normal test (thu muc Testing/Anomaly_Dataset/Event_Recognition): {int(nrm_test_m.sum())}")
+        print(f"Normal vua o train vua o test: {int((nrm_tr_m & nrm_test_m).sum())} -> xep TEST (mong doi 0)")
         vids.loc[nrm_u, "split"] = "ngoai_ds"
-        vids.loc[nrm_u & nrm_folder_test, "split"] = "test"
+        vids.loc[nrm_tr_m & ~nrm_test_m, "split"] = "train"
+        vids.loc[nrm_test_m, "split"] = "test"
         UCF_SPLIT = "danh sach chinh thuc"
     else:
         h = vids.key.map(lambda k: int(hashlib.md5(k.encode()).hexdigest(), 16) % 5)
@@ -355,6 +365,9 @@ CELLS_04 = [
     vids = vids[~vids.is_aug].reset_index(drop=True)
     ucf = vids.source == "ucf"
     print(f"Da bo {n_aug_all} video augment khoi train va test")
+    _new = vids[vids.dataset.str.contains("ufc-crime-full-dataset", regex=False)]
+    print(f"Video chi co o ufc-crime-full-dataset (minmints) sau bo trung: {len(_new)} -> {_new.cls.value_counts().to_dict()}"
+          f" (ky vong Normal train ~800)")
     vids["minutes"] = np.minimum(vids.dur_s, S.MAX_SEC) / 60
     vids["is_norm"] = vids.group == CFG["normal_group"]
     tm = (vids.split == "train") & vids.train_use
@@ -398,12 +411,12 @@ CELLS_04 = [
     print("== UCF: so video train / test theo lop (co trong du lieu) so voi danh sach chinh thuc")
     display(per)
     nrm = u.cls == "Normal"
-    got = {"Normal test (ngoai mien)": (nrm & (u.split == "test")).sum(),
+    got = {"Normal train UCF": (nrm & (u.split == "train")).sum(), "Normal test (ngoai mien)": (nrm & (u.split == "test")).sum(),
            "bat thuong train": (~nrm & (u.split == "train")).sum(), "bat thuong test": (~nrm & (u.split == "test")).sum()}
-    expect = {"Normal test (ngoai mien)": 150, "bat thuong train": 810, "bat thuong test": 140}
+    expect = {"Normal train UCF": 800, "Normal test (ngoai mien)": 150, "bat thuong train": 810, "bat thuong test": 140}
     print("So voi ky vong:", " | ".join(f"{k}: {got[k]} (~{expect[k]})"
                                        + ("" if abs(got[k] - expect[k]) <= 0.02 * expect[k] else " !!") for k in expect))
-    print("Normal train = RWF NonFight + RLVS NonViolence (ky vong ~1600, xem bang TAP TRAIN)")
+    print("Normal train ky vong = UCF ~800 + RWF NonFight + RLVS NonViolence ~1600 (ti le theo phut o bang TAP TRAIN)")
     if (u.split == "ngoai_ds").any():
         print(f"Video UCF ngoai danh sach (khong dung): {(u.split == 'ngoai_ds').sum()} – vd {u.fname[u.split == 'ngoai_ds'].head(3).tolist()}")
     """),

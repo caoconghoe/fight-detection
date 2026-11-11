@@ -129,6 +129,12 @@ def test_augment_and_keys():
     assert S.base_of("Abuse001_x264A.mp4") == S.key_of("Abuse001_x264.mp4")
 
 
+def test_list_key_strips_c():
+    assert S.list_key("Normal_Videos001_x264_C", normal=True) == S.key_of("Normal_Videos001_x264.mp4")
+    assert S.list_key("Training-Normal-Videos-Part-1/Normal_Videos001_x264_C.mp4", normal=True) == S.key_of("Normal_Videos001_x264.mp4")
+    assert S.list_key("Abuse001_x264_C") == S.key_of("Abuse001_x264_C")     # chi Normal list moi bo _C
+
+
 if __name__ == "__main__":
     tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_") and callable(f)]
     failed = 0

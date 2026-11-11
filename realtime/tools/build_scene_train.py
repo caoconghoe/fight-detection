@@ -184,8 +184,10 @@ CELLS_05 = [
     model = WinHead().to(DEVICE)
     opt = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=WD)
     n_ep, n_st = (QUICK_EPOCHS, QUICK_STEPS) if QUICK else (EPOCHS, STEPS)
+    CKPT_QUICK = QUICK                      # quick cua chinh checkpoint se ghi vao scene_config.json
     if LOAD_PT:
         ck = torch.load(LOAD_PT, map_location=DEVICE, weights_only=False)
+        CKPT_QUICK = ck.get("quick", "khong ro (checkpoint cu)")
         model.load_state_dict(ck["model"])
         MU, SD = np.asarray(ck["mu"]), np.asarray(ck["sd"])
         n_ep = 0
@@ -329,7 +331,7 @@ CELLS_05 = [
             return self.m.win(x)
 
     model.eval().cpu()
-    torch.save({"model": model.state_dict(), "mu": MU, "sd": SD}, os.path.join(WORK, "scene_head.pt"))
+    torch.save({"model": model.state_dict(), "mu": MU, "sd": SD, "quick": CKPT_QUICK}, os.path.join(WORK, "scene_head.pt"))
     head_onnx = os.path.join(WORK, "scene_head.onnx")
     torch.onnx.export(HeadExport(model), torch.zeros(2, WIN, 960), head_onnx, input_names=["x"],
                       output_names=["window_score", "group_logits"], opset_version=17,
@@ -360,7 +362,7 @@ CELLS_05 = [
                "window_note": "realtime: 16 vector backbone lien tiep (2 FPS = 8 s) -> chuan hoa (mean/std) -> scene_head",
                "groups_abnormal": ABN_GROUPS, "normal_group": NORMAL, "threshold_note": "khong dat nguong cuoi; nguong goi y in trong log danh gia",
                "mean": MU.tolist(), "std": SD.tolist(), "trained_on": "UCF train + RWF NonFight + RLVS NonViolence",
-               "quick": QUICK, "results": res.to_dict("records")}
+               "quick": CKPT_QUICK, "results": res.to_dict("records")}
     with open(os.path.join(WORK, "scene_config.json"), "w", encoding="utf-8") as f:
         json.dump(cfg_out, f, ensure_ascii=False, indent=1, default=float)
     for fn in sorted(os.listdir(WORK)):

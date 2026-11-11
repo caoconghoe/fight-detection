@@ -23,7 +23,7 @@ FORBIDDEN_EXACT = {"alldata": "All_Data"}
 FORBIDDEN_SUB = {"augmented": "Augmented*", "fightinga": "FightingA*", "extracted": "Extracted*",
                  "perframe": "Per_Frame*", "modeltrained": "Model_Trained*"}
 NO_SCAN_SUB = ("extracted", "perframe", "modeltrained")          # thư mục đặc trưng: không quét vào (rất nhiều file)
-PREFERRED_DATASETS = ("anomalydetectiondatasetucf",)              # bản UCF đầy đủ (minhajuddinmeraj) – ưu tiên khi trùng
+PREFERRED_DATASETS = ("anomalydetectiondatasetucf", "ufc-crime-full-dataset")   # thu tu: minhajuddin, roi minmints              # bản UCF đầy đủ (minhajuddinmeraj) – ưu tiên khi trùng
 LOW_PRIORITY_DUP = ("real life violence situations",)   # bản sao trùng của RLVS -> chỉ giữ khi không có bản chính
 NORMAL = "Normal"           # mọi thư mục / tên file có chữ "normal" -> lớp Normal
 SOURCE_OF = {"Fight": "rwf", "NonFight": "rwf", "Violence": "rlvs", "NonViolence": "rlvs"}   # còn lại: ucf
@@ -69,6 +69,14 @@ def source_of(cls):
 
 
 AUG_RE = re.compile(r"(?i)((?<=[0-9])[_-]?a|[_-](aug|flip|flipped|noise|blur|bright|dark|rot)[a-z0-9]*)$")
+
+
+def list_key(tok, normal=False):
+    """Khoa cua 1 dong danh sach. Normal_Train.txt: bo hau to _C va duoi truoc khi chuan hoa."""
+    t = str(tok)
+    if normal:
+        t = re.sub(r"(?i)_c(\.[a-z0-9]+)?$", "", t)
+    return key_of(t)
 
 
 def key_of(name):
@@ -126,7 +134,7 @@ def priority(rel_path, top_folder, index):
     """Khoá sắp xếp khi trùng tên file (nhỏ hơn = giữ):
     (dataset ưu tiên trước, thư mục chính trước thư mục lớp lẻ / Event_Recognition, bản chính trước bản sao).
     top_folder: thư mục cấp đầu ngay dưới gốc dataset (vd Anomaly-Videos-Part-1, Burglary)."""
-    ds = 0 if any(d in norm(rel_path) for d in PREFERRED_DATASETS) else 1
+    ds = next((i for i, d in enumerate(PREFERRED_DATASETS) if norm(d) in norm(rel_path)), len(PREFERRED_DATASETS))
     t = norm(top_folder)
     loose = int(t in index or "eventrecognition" in t)
     return ds, loose, dup_rank(rel_path)
