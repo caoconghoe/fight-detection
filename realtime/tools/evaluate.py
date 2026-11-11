@@ -39,6 +39,7 @@ LABELS = {                                   # tiền tố tên file -> loại s
     "fall": FALL,
     "fallstill": FALL_STILL,
     "panic": "HOẢNG LOẠN",
+    "run": "CHẠY NHANH", "running": "CHẠY NHANH",
     "handsup": "GIƠ TAY ĐẦU HÀNG",
     "wave": "VẪY TAY CẦU CỨU",
     "still": STILL, "lying": STILL,

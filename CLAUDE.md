@@ -30,6 +30,7 @@
 | 5 | GIƠ TAY ĐẦU HÀNG | Luật tư thế | 70 |
 | 6 | VẪY TAY CẦU CỨU | Luật tư thế | 60 |
 | 7 | NẰM BẤT ĐỘNG | Luật tư thế | 60 |
+| 7b | CHẠY NHANH | Luật khung xương: tốc độ ngang + dọc (ln L), động tác chân, hướng ổn định (`detectors/running.py`) | 55 |
 | 8 | ÔM ĐẦU / GỤC ĐẦU | Luật tư thế | 40 |
 | 9 | CẢNH BẤT THƯỜNG: <nhóm> | **Luồng 2** – ảnh màu cả cảnh, MobileNetV3 + MIL train trên UCF-Crime (mục 12) | 50 |
 
@@ -199,8 +200,9 @@ Mọi detector giả định dữ liệu vào ở **15 FPS** (đọc từ `confi
 ```python
 PRIORITY = {"ĐÁNH NHAU": 100, "TÉ NGÃ RỒI NẰM BẤT ĐỘNG": 90, "HOẢNG LOẠN": 85,
             "TÉ NGÃ": 80, "GIƠ TAY ĐẦU HÀNG": 70, "VẪY TAY CẦU CỨU": 60,
-            "NẰM BẤT ĐỘNG": 60, "CẢNH BẤT THƯỜNG": 50, "ÔM ĐẦU / GỤC ĐẦU": 40}
+            "NẰM BẤT ĐỘNG": 60, "CHẠY NHANH": 55, "CẢNH BẤT THƯỜNG": 50, "ÔM ĐẦU / GỤC ĐẦU": 40}
 ```
+- **CHẠY NHANH**: khi có HOẢNG LOẠN trong cùng tick hoặc ≤ `events.panic_hold_sec` (10 s) → bỏ mọi sự kiện CHẠY NHANH.
 Sự kiện luồng 2 có `type = "CẢNH BẤT THƯỜNG: <nhóm>"` (vd `CẢNH BẤT THƯỜNG: CƯỚP`), `ids = []` (cả cảnh);
 mức ưu tiên tra theo phần trước dấu ":" (= 50). Cooldown tính riêng từng nhóm (vì type khác nhau).
 

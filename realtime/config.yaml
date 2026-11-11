@@ -42,6 +42,7 @@ events:                         # EventManager (core/events.py)
   cooldown_sec: 10              # cùng (loại, tập ID) không báo lại trong N giây
   fight_hold_sec: 3             # ID vừa đánh nhau ≤ N giây -> bỏ các cảnh báo thấp hơn của ID đó
   fall_upgrade_sec: 30          # NẰM BẤT ĐỘNG trong N giây sau TÉ NGÃ -> "TÉ NGÃ RỒI NẰM BẤT ĐỘNG"
+  panic_hold_sec: 10            # HOẢNG LOẠN vừa báo ≤ N giây -> không báo CHẠY NHANH
 
 full_body:                      # "thấy đủ thân" – điều kiện để xét TÉ NGÃ và NẰM BẤT ĐỘNG
   shoulder_hip_conf: 0.5        # 2 vai + 2 hông conf ≥ N
@@ -106,6 +107,30 @@ detectors:
     surge_ratio: 2.0            # tốc độ TB cả cảnh > N × mức nền
     hold_sec: 1.0
     cooldown_sec: 10
+
+  running:                      # CHẠY NHANH (detectors/running.py) – ưu tiên 55, chỉ ghi hướng trong chi tiết
+    enabled: true
+    speed_thr: 4.5              # tốc độ tổng > N "thân" L/giây (L = trung vị các đoạn vai–hông, rộng vai/hông, hông–gối)
+    min_sec: 1.0                # ... liên tục ≥ N giây (cùng động tác chân + hướng ổn định)
+    win_sec: 1.0                # cửa sổ đo tốc độ / động tác chân / hướng
+    camera_vfov_deg: 50         # góc nhìn dọc của camera -> f = H_ảnh / (2·tan(vfov/2)) để đổi ln(L) thành tốc độ dọc
+    seg_conf: 0.5               # đoạn thân dùng tính L: 2 đầu khớp conf ≥ N
+    seg_max_dev: 0.4            # bỏ đoạn lệch > N so với trung vị
+    need_conf: 0.5              # phải thấy 2 hông + ≥ 1 gối conf ≥ N
+    ankle_conf: 0.5             # cổ chân conf ≥ N mới dùng cho dấu hiệu chân
+    knee_amp_deg: 35            # nhìn ngang: góc gối dao động (lên-xuống) ≥ N độ ...
+    ankle_amp: 0.6              # ... hoặc khoảng cách 2 cổ chân dao động ≥ N × L ...
+    leg_swings: 2               # ... ít nhất N lần đổi chiều trong 1 s (đứng dậy / cúi người chỉ đổi 1 chiều)
+    alt_beats: 2                # nhìn chính diện: 2 cổ chân lên xuống luân phiên ≥ N nhịp trong 1 s ...
+    alt_hyst: 0.1               # ... chênh độ cao 2 cổ chân phải vượt ±N × L mới tính 1 nhịp
+    straight_min: 0.6           # hướng ngang ổn định: dịch chuyển ròng / quãng đường trong 1 s ≥ N
+    depth_sign_ratio: 0.8       # hướng dọc ổn định: dấu hệ số góc ln(L) giữ nguyên ở ≥ N số frame trong 1 s
+    jump_body: 3.0              # hông nhảy > N × L trong 1 frame -> coi là nhảy ID, đo lại từ đầu
+    min_track_sec: 1.0          # ID mới xuất hiện < N giây chưa tính
+    shake_min_people: 3         # có ≥ N người có số liệu ...
+    shake_ratio: 0.7            # ... và ≥ N trong số đó cùng dịch một hướng -> rung / lia camera, không báo
+    shake_min_move: 0.5         # "đang dịch" = dịch chuyển ròng ≥ N × L trong 1 s
+    cooldown_sec: 10            # mỗi ID
 
 # LUỒNG 2 – nhìn ảnh màu cả cảnh (CLAUDE.md mục 12). Ánh xạ lớp UCF-Crime -> nhóm: NGUỒN DUY NHẤT,
 # tools/build_scene_notebooks.py chép nguyên mục này vào notebook 04/05. Lớp không có trong dữ liệu tự bỏ qua.

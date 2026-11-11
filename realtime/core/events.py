@@ -3,15 +3,17 @@ import importlib
 
 PRIORITY = {"ĐÁNH NHAU": 100, "TÉ NGÃ RỒI NẰM BẤT ĐỘNG": 90, "HOẢNG LOẠN": 85,
             "TÉ NGÃ": 80, "GIƠ TAY ĐẦU HÀNG": 70, "VẪY TAY CẦU CỨU": 60,
-            "NẰM BẤT ĐỘNG": 60, "CẢNH BẤT THƯỜNG": 50, "ÔM ĐẦU / GỤC ĐẦU": 40}
+            "NẰM BẤT ĐỘNG": 60, "CHẠY NHANH": 55, "CẢNH BẤT THƯỜNG": 50, "ÔM ĐẦU / GỤC ĐẦU": 40}
 
 FIGHT, FALL, STILL, FALL_STILL = "ĐÁNH NHAU", "TÉ NGÃ", "NẰM BẤT ĐỘNG", "TÉ NGÃ RỒI NẰM BẤT ĐỘNG"
+PANIC, RUN = "HOẢNG LOẠN", "CHẠY NHANH"
 
 # tên trong config.yaml -> "module:Lớp"
 REGISTRY = {"fight": "detectors.fight:FightDetector",
             "fall": "detectors.fall:FallDetector",
             "pose_rules": "detectors.pose_rules:PoseRulesDetector",
             "panic": "detectors.panic:PanicDetector",
+            "running": "detectors.running:RunningDetector",
             "scene": "detectors.scene:SceneDetector"}
 
 
@@ -35,9 +37,11 @@ def build_detectors(cfg):
 
 
 class EventManager:
-    def __init__(self, detectors, cooldown_sec=10.0, fight_hold_sec=3.0, fall_upgrade_sec=30.0):
+    def __init__(self, detectors, cooldown_sec=10.0, fight_hold_sec=3.0, fall_upgrade_sec=30.0, panic_hold_sec=10.0):
         self.detectors = list(detectors)
         self.cooldown, self.fight_hold, self.fall_upgrade = cooldown_sec, fight_hold_sec, fall_upgrade_sec
+        self.panic_hold = panic_hold_sec
+        self.last_panic = -1e9   # t lần cuối có HOẢNG LOẠN (kể cả khi bị cooldown)
         self.last_fight = {}     # id -> t lần cuối nằm trong ĐÁNH NHAU
         self.last_fall = {}      # id -> t lần cuối TÉ NGÃ
         self.last_sent = {}      # (type, frozenset(ids)) -> t lần cuối đã báo
@@ -59,6 +63,12 @@ class EventManager:
                 self.last_fall.update({i: t for i in e["ids"]})
             elif e["type"] == FIGHT:
                 self.last_fight.update({i: t for i in e["ids"]})
+            elif e["type"] == PANIC:
+                self.last_panic = t
+
+        # HOẢNG LOẠN đang báo (cùng tick hoặc ≤ panic_hold_sec) -> không báo CHẠY NHANH của bất kỳ ai
+        if t - self.last_panic <= self.panic_hold:
+            raw = [e for e in raw if e["type"] != RUN]
 
         # nâng cấp: NẰM BẤT ĐỘNG sau TÉ NGÃ (≤ 30 s) -> TÉ NGÃ RỒI NẰM BẤT ĐỘNG
         for e in raw:
