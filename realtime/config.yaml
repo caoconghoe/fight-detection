@@ -89,6 +89,14 @@ detectors:
     distress_slumped: true      # false = tắt nhánh "gục đầu" (dễ nhầm với cúi xem điện thoại)
     cooldown_sec: 15.0          # mỗi (ID, luật)
 
+  scene:                        # CẢNH BẤT THƯỜNG – luồng 2 (detectors/scene.py, CLAUDE.md mục 12)
+    enabled: true
+    threshold: -0.80            # điểm cửa sổ > N ở đủ min_consecutive cửa sổ liên tiếp -> cảnh báo (calibrate_scene.py để chỉnh)
+    min_consecutive: 2          # số cửa sổ liên tiếp vượt ngưỡng
+    threads: 2                  # luồng backbone (OpenVINO / ONNX Runtime) – tránh tranh CPU với YOLO
+    backend: openvino           # openvino | onnxruntime
+    group_note: "~40%"          # chỉ để hiển thị: độ chính xác phân nhóm (gợi ý, không phải kết quả chắc chắn)
+
   panic:                        # HOẢNG LOẠN (detectors/panic.py)
     enabled: true
     run_speed: 1.5              # chạy = tốc độ > N chiều cao người/giây

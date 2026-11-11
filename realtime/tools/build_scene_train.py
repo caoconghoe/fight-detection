@@ -111,10 +111,10 @@ CELLS_05 = [
     TE_RWF = meta.index[(meta.split == "test") & (meta.source == "rwf")].values
     TE_RLVS = meta.index[(meta.split == "test") & (meta.source == "rlvs")].values
     print("== So video")
-    print(pd.Series({"train bat thuong (UCF)": len(TR_AB), "train binh thuong (RWF NonFight + RLVS NonViolence)": len(TR_NO),
+    print(pd.Series({"train bat thuong (UCF)": len(TR_AB), "train binh thuong (Normal UCF + RWF NonFight + RLVS NonViolence)": len(TR_NO),
                      "test bat thuong UCF": len(TE_UCF_AB), "test Normal UCF (ngoai mien)": len(TE_UCF_NO),
                      "test RWF (Fight + NonFight)": len(TE_RWF), "test RLVS (Violence + NonViolence)": len(TE_RLVS)}))
-    print("Ky vong: 810 | 1600 | 140 | 150 | - | -   (QUICK chi co mot phan)")
+    print("Ky vong: bat thuong train 810 | binh thuong train ~2400 (Normal UCF ~800 + RWF/RLVS ~1600) | bat thuong test 140 | Normal test 150   (QUICK chi co mot phan)")
     print("Nhom tren tap train bat thuong:", meta.loc[TR_AB].group.value_counts().to_dict())
     """),
     md("## 4. Chuẩn hoá và cửa sổ"),
@@ -236,7 +236,7 @@ CELLS_05 = [
 
     # NGUONG GOI Y: chi in ra, KHONG ghi vao config (nguon: 95% phan vi video binh thuong TRAIN)
     SUGGEST = {m: float(np.percentile([sc[r] for r in TR_NO], 95)) for m, sc in METHODS.items()}
-    print("NGUONG GOI Y (95% phan vi video binh thuong TRAIN = RWF NonFight + RLVS NonViolence; KHONG dat vao config):")
+    print("NGUONG GOI Y (95% phan vi video binh thuong TRAIN = Normal UCF + RWF NonFight + RLVS NonViolence; KHONG dat vao config):")
     for m, t in SUGGEST.items():
         print(f"  cach {m:5s}: {t:.3f}")
 
@@ -361,7 +361,7 @@ CELLS_05 = [
     cfg_out = {"fps": S.FPS, "size": S.SIZE, "feat_dim": S.FEAT_DIM, "window": WIN, "stride": STRIDE,
                "window_note": "realtime: 16 vector backbone lien tiep (2 FPS = 8 s) -> chuan hoa (mean/std) -> scene_head",
                "groups_abnormal": ABN_GROUPS, "normal_group": NORMAL, "threshold_note": "khong dat nguong cuoi; nguong goi y in trong log danh gia",
-               "mean": MU.tolist(), "std": SD.tolist(), "trained_on": "UCF train + RWF NonFight + RLVS NonViolence",
+               "mean": MU.tolist(), "std": SD.tolist(), "trained_on": "bat thuong: UCF train (810); binh thuong: Normal UCF train (~800) + RWF NonFight + RLVS NonViolence (~1600)",
                "quick": CKPT_QUICK, "results": res.to_dict("records")}
     with open(os.path.join(WORK, "scene_config.json"), "w", encoding="utf-8") as f:
         json.dump(cfg_out, f, ensure_ascii=False, indent=1, default=float)

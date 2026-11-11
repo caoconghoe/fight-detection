@@ -217,7 +217,7 @@ CELLS_04 = [
     """),
     md("""
     ## 4. Chia train / test – protocol CHÍNH THỨC của UCF-Crime
-    UCF: `Anomaly_Train.txt` = **train** (Normal UCF không có mp4 → không dùng `Normal_Train.txt`; Normal train = RWF NonFight + RLVS NonViolence), `Anomaly_Test.txt` = **test** (mọi bản sao của các file này,
+    UCF: `Anomaly_Train.txt` = **train** (Normal UCF không có mp4 → không dùng `Normal_Train.txt`; Normal train = Normal UCF (~800) + RWF NonFight + RLVS NonViolence (~1600)), `Anomaly_Test.txt` = **test** (mọi bản sao của các file này,
     kể cả trong `UCF_Crimes-Train-Test-Split*`, được đối chiếu với nhau), đối chiếu với file chú thích thời gian (video có
     chú thích = test). `Anomaly_Train_New.txt` KHÔNG dùng (chỉ báo nó có giống `Anomaly_Train.txt` không).
     Video UCF không có trong danh sách nào → `ngoai_ds`, **không dùng** (trừ khi `USE_UNLISTED_UCF = True`).
@@ -387,7 +387,7 @@ CELLS_04 = [
     for _, r in ab.nlargest(5, "dur_s").iterrows():
         print(f"  {r.dur_s:8.1f} s  {os.path.relpath(r.path, INPUT)}")
     n_long = int((vids.dur_s > S.MAX_SEC).sum())
-    print(f"Video dai hon {S.MAX_SEC // 60} phut: {n_long} (extract chi lay {MAX_SEC // 60 if not QUICK else QUICK_MAX_SEC} giay dau; "
+    print(f"Video dai hon {S.MAX_SEC // 60} phut: {n_long} (extract chi lay {(MAX_SEC if not QUICK else QUICK_MAX_SEC) // 60} phut dau (= {MAX_SEC if not QUICK else QUICK_MAX_SEC} giay); "
           f"bang thong ke dung minutes = min(dur, {S.MAX_SEC // 60} phut))")
     print("UCF :", UCF_SPLIT)
     print("RWF : thu muc train / val")
@@ -416,7 +416,7 @@ CELLS_04 = [
     expect = {"Normal train UCF": 800, "Normal test (ngoai mien)": 150, "bat thuong train": 810, "bat thuong test": 140}
     print("So voi ky vong:", " | ".join(f"{k}: {got[k]} (~{expect[k]})"
                                        + ("" if abs(got[k] - expect[k]) <= 0.02 * expect[k] else " !!") for k in expect))
-    print("Normal train ky vong = UCF ~800 + RWF NonFight + RLVS NonViolence ~1600 (ti le theo phut o bang TAP TRAIN)")
+    print("Normal train ky vong = Normal UCF ~800 + RWF NonFight + RLVS NonViolence ~1600 = ~2400 (ti le theo phut o bang TAP TRAIN)")
     if (u.split == "ngoai_ds").any():
         print(f"Video UCF ngoai danh sach (khong dung): {(u.split == 'ngoai_ds').sum()} – vd {u.fname[u.split == 'ngoai_ds'].head(3).tolist()}")
     """),

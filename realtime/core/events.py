@@ -3,7 +3,7 @@ import importlib
 
 PRIORITY = {"ĐÁNH NHAU": 100, "TÉ NGÃ RỒI NẰM BẤT ĐỘNG": 90, "HOẢNG LOẠN": 85,
             "TÉ NGÃ": 80, "GIƠ TAY ĐẦU HÀNG": 70, "VẪY TAY CẦU CỨU": 60,
-            "NẰM BẤT ĐỘNG": 60, "ÔM ĐẦU / GỤC ĐẦU": 40}
+            "NẰM BẤT ĐỘNG": 60, "CẢNH BẤT THƯỜNG": 50, "ÔM ĐẦU / GỤC ĐẦU": 40}
 
 FIGHT, FALL, STILL, FALL_STILL = "ĐÁNH NHAU", "TÉ NGÃ", "NẰM BẤT ĐỘNG", "TÉ NGÃ RỒI NẰM BẤT ĐỘNG"
 
@@ -11,7 +11,8 @@ FIGHT, FALL, STILL, FALL_STILL = "ĐÁNH NHAU", "TÉ NGÃ", "NẰM BẤT ĐỘNG
 REGISTRY = {"fight": "detectors.fight:FightDetector",
             "fall": "detectors.fall:FallDetector",
             "pose_rules": "detectors.pose_rules:PoseRulesDetector",
-            "panic": "detectors.panic:PanicDetector"}
+            "panic": "detectors.panic:PanicDetector",
+            "scene": "detectors.scene:SceneDetector"}
 
 
 def build_detectors(cfg):

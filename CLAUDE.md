@@ -140,11 +140,17 @@ Lệnh chạy (từ thư mục `httm`): `python realtime/main.py [nguồn]` – 
 - **D2:** `tools/evaluate.py` (nhãn theo tiền tố tên file, CSV vào `kaggle/results/`). **D3:** `run.bat`, `README.md`.
 - Unit test: `realtime/tests/test_*.py` (features, fight, pose_rules, body_rules, recorder, evaluate).
 
-**Đang làm – LUỒNG 2 (mục 12, quyết định 2026-11-08):** đã có `shared/scene.py`, mục `scene` trong config,
-`kaggle/04_scene_features.ipynb` (chạy thử trên máy bằng dữ liệu giả: quét, gộp 2 bản UCF bỏ trùng theo tên file,
-chia split, trích, chạy tiếp, ước tính thời gian đều đúng). **2026-11-10:** chuyển sang bản UCF đầy đủ
-`anomalydetectiondatasetucf` + split chính thức (mục 12.2); chờ người dùng chạy QUICK trên Kaggle. Notebook 05 CHƯA có
-trong repo (yêu cầu ở mục 12.4). Notebook 03 trích khung xương UCF: **tạm dừng / không làm**.
+**LUỒNG 2 (mục 12) – đã có mô hình và realtime (2026-11-11):**
+- Dữ liệu: UCF-Crime đầy đủ (`minhajuddinmeraj/anomalydetectiondatasetucf`, bản `minmints/ufc-crime-full-dataset` cho
+  Normal train), RWF-2000, RLVS; split chính thức. Notebook `kaggle/04_scene_features.ipynb` → `kaggle/05_scene_train.ipynb`.
+- Cửa sổ **16 frame (2 FPS, ~8 s), bước 8**, khớp realtime. Train: bất thường UCF 810; bình thường Normal UCF ~800 +
+  RWF NonFight + RLVS NonViolence ~1600; test UCF bất thường 140, Normal UCF 150 (ngoài miền).
+- Kết quả (notebook 05, bản huấn luyện với 800 Normal UCF): **AUC video UCF 0.906**, **AUC cửa sổ 0.749**,
+  báo nhầm Normal UCF **7.3%** (ngưỡng gợi ý cách max: −0.803), **phân nhóm ~40%** (chỉ dùng làm gợi ý).
+- Realtime: `detectors/scene.py` (luồng nền 2 FPS, backbone OpenVINO, `scene_head.onnx`), ngưỡng
+  `detectors.scene.threshold` = −0.80, cảnh báo khi ≥ 2 cửa sổ liên tiếp vượt ngưỡng, ưu tiên 50, tên nhóm chỉ là gợi ý.
+  Hiệu chỉnh ngưỡng: `realtime/tools/calibrate_scene.py` (ghi điểm 10–20 phút cảnh bình thường).
+  FPS luồng 1 khi bật luồng 2 chênh trong nhiễu đo (≤ ~3%).
 
 **Còn lại:**
 - Thử webcam với **2 người thật** (Mốc C): giả vờ đánh nhau → báo đúng cặp, khung đỏ; mẫu âm khó (ôm, đập tay, bắt tay).
@@ -326,10 +332,11 @@ Viết `realtime/tools/build_kaggle_notebook.py` sinh ra `kaggle/02_train.ipynb`
 
 ### Giai đoạn E – LUỒNG 2: nhìn cả cảnh (mục 12)
 - [x] **E0.** `shared/scene.py`, mục `scene` trong `config.yaml`, `tools/build_scene_notebooks.py`, test `tests/test_scene.py`.
-- [ ] **E1.** `kaggle/04_scene_features.ipynb` – *đã viết + chạy thử trên máy; CHỜ chạy QUICK rồi đầy đủ trên Kaggle.*
-- [~] **E2.** *(đã sinh `kaggle/05_scene_train.ipynb` bằng `realtime/tools/build_scene_train.py`, chạy thử trên dữ liệu giả OK; CHỜ chạy trên Kaggle)* – train MIL (ranking loss Sultani 2018) + head phân nhóm; đánh giá; xuất ONNX.
-- [ ] **E3.** `detectors/scene.py` – luồng nền 2 FPS (backbone OpenVINO), làm mượt, báo ≥ 2 s; đo FPS luồng 1 không giảm.
-- [ ] **E4.** DB thêm `scene_score`, `scene_group`, `fight_score` cho mọi sự kiện; `evaluate.py` bảng so sánh
+- [x] **E1.** `kaggle/04_scene_features.ipynb` – đã chạy đầy đủ trên Kaggle (5100 video, 0 lỗi).
+- [x] **E2.** *(`kaggle/05_scene_train.ipynb` từ `realtime/tools/build_scene_train.py`; đã chạy đầy đủ, xem mục 12.5)* – train MIL (ranking loss Sultani 2018) + head phân nhóm; đánh giá; xuất ONNX.
+- [x] **E3.** `detectors/scene.py` – luồng nền 2 FPS (backbone OpenVINO), cảnh báo ≥ 2 cửa sổ liên tiếp; `tools/calibrate_scene.py`; FPS luồng 1 không tụt đáng kể.
+- [x] **E4a.** DB thêm `scene_score`, `scene_group`, `fight_score` cho mọi sự kiện (cột tự thêm vào DB cũ).
+- [ ] **E4b.** `evaluate.py` bảng so sánh
   chỉ luồng 1 / chỉ luồng 2 / kết hợp.
 - **Mốc E:** AUC mức frame trên UCF test ≥ 0.75 (tham khảo: Sultani 2018 với C3D ≈ 0.75); FPS luồng 1 không giảm.
 - **Việc sau (chưa làm):** cháy/khói bằng YOLO riêng.
@@ -903,7 +910,7 @@ không thể hiện (cướp, cháy nổ, đột nhập/trộm, tai nạn...). H
   `shared/scene.py::prep`.
 - **Đặc trưng:** **MobileNetV3-Large** pretrained ImageNet (`IMAGENET1K_V2`), **đóng băng**, 1 vector 960 chiều / frame
   (sau global average pooling). Chuẩn hoá ImageNet nằm **trong** mô hình (vào uint8 RGB `(B, 224, 224, 3)`).
-- **Đoạn:** 16 frame mẫu (~8 s) → mạng nhỏ (MLP hoặc GRU) → **điểm bất thường 0..1** + **nhóm**.
+- **Cửa sổ:** 16 frame mẫu (~8 s) → MLP theo từng frame → trung bình → **điểm (logit, KHÔNG phải 0..1)** + logit 5 nhóm.
 - **Nhóm** (ánh xạ trong `config.yaml: scene.groups` – nguồn duy nhất; lớp không có trong dữ liệu tự bỏ qua):
   BẠO LỰC: Fighting, Assault, Abuse, Arrest, Shooting · CƯỚP: Robbery · CHÁY NỔ: Arson, Explosion ·
   ĐỘT NHẬP/TRỘM: Burglary, Stealing, Shoplifting, Vandalism · TAI NẠN: RoadAccidents ·
@@ -970,3 +977,16 @@ không thể hiện (cướp, cháy nổ, đột nhập/trộm, tai nạn...). H
 - **2 thí nghiệm để so sánh:** (a) UCF + NonFight/NonViolence làm mẫu bình thường bổ sung; (b) **chỉ UCF**.
 - Đánh giá: AUC mức frame trên UCF test (chú thích thời gian), AUC mức clip RWF/RLVS val, độ chính xác phân nhóm.
 - Xuất `scene_backbone.onnx`, `scene_head.onnx`, `scene_config.json`.
+
+### 12.5 Kết quả huấn luyện và realtime (cập nhật 2026-11-11)
+- Mô hình: `scene_head.onnx` (input 16×960, ra điểm cửa sổ + logit 5 nhóm), `scene_backbone.onnx` (uint8 RGB 224×224 → 960),
+  `scene_config.json` (mean/std 960, `window 16`, `stride 8`, `fps 2`, `trained_on` ghi rõ Normal UCF).
+  Cả ba nằm trong git (đã whitelist trong `.gitignore`).
+- Đánh giá (notebook 05, bản 800 Normal UCF): AUC video UCF 0.906, F1 và FPR xem log; AUC cửa sổ (~frame) 0.749;
+  báo nhầm Normal UCF 7.3% với ngưỡng gợi ý −0.803 (cách max). Phân nhóm ~40%.
+- Lối tắt độ dài vẫn cần theo dõi: điểm cửa sổ tăng theo độ dài clip; báo nhầm trên Normal dài cao hơn ngắn.
+- Realtime: ngưỡng `detectors.scene.threshold = −0.80` (đặt tay trong config, không tự ghi từ calibrate). Cảnh báo
+  `CẢNH BẤT THƯỜNG` ưu tiên 50, `ids = []`, chi tiết ghi "gợi ý: <nhóm>". DB: `scene_score`, `scene_group`, `fight_score`.
+- Kiểm tra trên máy: backbone OpenVINO khớp ONNX Runtime (lệch ~6e-6). Video thử (cảnh tĩnh) cho điểm ~ −14, rất xa ngưỡng,
+  nên ngưỡng phải hiệu chỉnh bằng cảnh bình thường thật (`calibrate_scene.py`).
+- Việc còn lại của luồng 2: thử webcam thực tế; hiệu chỉnh ngưỡng trên camera thật; E4b (bảng so sánh luồng 1/2/kết hợp).

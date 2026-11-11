@@ -4,5 +4,8 @@ realtime/models/*.pt
 realtime/models/*_openvino_model/
 realtime/models/*.onnx
 !realtime/models/pair_tcn.onnx
+!realtime/models/scene_head.onnx
+!realtime/models/scene_backbone.onnx
 realtime/events/
+realtime/events_archive/
 data_selfrecorded/

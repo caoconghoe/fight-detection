@@ -45,6 +45,7 @@ def main():
                        dedup_iou=pc["dedup_iou"], dedup_contain=pc["dedup_contain"])
     sampler = FpsSampler(cfg["sample_fps"])
     manager = EventManager(build_detectors(cfg), **cfg["events"])
+    fight_det = next((d for d in manager.detectors if d.name == "fight"), None)
     print("Detector:", ", ".join(d.name for d in manager.detectors) or "(chua co)")
     uc = cfg["ui"]
     ui = UI(uc["font_size"], uc["kpt_conf"], uc["panel_width"], uc["new_sec"])
@@ -131,10 +132,13 @@ def main():
             view = ui.draw(frame, tracks, status, alerts, highlight, debug=dbg)
             if recorder:
                 recorder.push(view, t)
+            fight_score = max(fight_det.ema.values(), default=0.0) if fight_det is not None else None
             for e in events:                      # ảnh chụp đã có khung đỏ + cảnh báo trên panel
                 name = event_name(e)
                 snap = save_snapshot(view, name)
-                e["id"] = db.add_event(session, e["type"], e["severity"], e["ids"], e["confidence"], snap)
+                e["id"] = db.add_event(session, e["type"], e["severity"], e["ids"], e["confidence"], snap,
+                                       scene_score=e.get("scene_score"), scene_group=e.get("scene_group"),
+                                       fight_score=fight_score)
                 if recorder:
                     recorder.trigger(e["id"], name, t)
 
@@ -159,6 +163,8 @@ def main():
                 reason = f"du {a.frames} frame"
                 break
     finally:                                      # q, nút X, hết video, Ctrl+C hay lỗi đều đóng session
+        for d in manager.detectors:               # luồng nền của luồng 2 (nếu có)
+            getattr(d, "close", lambda: None)()
         if recorder:
             recorder.close()                      # ghi nốt clip đang gom dở, chờ luồng ghi (cần db còn mở)
         db.end_session(session)

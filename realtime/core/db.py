@@ -46,6 +46,10 @@ class EventDB:
         with self.lock:
             self.conn.execute("PRAGMA journal_mode=WAL")
             self.conn.executescript(SCHEMA)
+            cols = {r[1] for r in self.conn.execute("PRAGMA table_info(events)")}
+            for c, typ in (("scene_score", "REAL"), ("scene_group", "TEXT"), ("fight_score", "REAL")):
+                if c not in cols:                           # DB cu: them cot luong 2 / luong 1
+                    self.conn.execute(f"ALTER TABLE events ADD COLUMN {c} {typ}")
             self.conn.commit()
 
     def _exec(self, sql, args=()):
@@ -66,13 +70,16 @@ class EventDB:
     def end_session(self, session_id):
         self._exec("UPDATE sessions SET ended_at = ? WHERE id = ?", (now_str(), session_id))
 
-    def add_event(self, session_id, type, severity, ids, confidence=None, snapshot=None, clip=None):
+    def add_event(self, session_id, type, severity, ids, confidence=None, snapshot=None, clip=None,
+                  scene_score=None, scene_group=None, fight_score=None):
         return self._exec(
-            "INSERT INTO events(session_id, ts, type, severity, track_ids, confidence, snapshot_path, clip_path)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO events(session_id, ts, type, severity, track_ids, confidence, snapshot_path, clip_path,"
+            " scene_score, scene_group, fight_score) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (session_id, now_str(), type, severity, json.dumps([int(i) for i in ids]),
              None if confidence is None else float(confidence),
-             None if snapshot is None else str(snapshot), None if clip is None else str(clip))).lastrowid
+             None if snapshot is None else str(snapshot), None if clip is None else str(clip),
+             None if scene_score is None else float(scene_score), scene_group,
+             None if fight_score is None else float(fight_score))).lastrowid
 
     def set_clip(self, event_id, path):
         self._exec("UPDATE events SET clip_path = ? WHERE id = ?", (str(path), event_id))
