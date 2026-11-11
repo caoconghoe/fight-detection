@@ -41,7 +41,9 @@ class SceneScorer:
         self.head_in = self.head.get_inputs()[0].name
 
         self.buf = deque(maxlen=self.win)
-        self.q = queue.Queue(maxsize=8)
+        self.n_in = 0                                       # số frame 2 FPS đã nhận
+        self.n_dropped = 0                                  # số frame bị bỏ (chỉ khi máy quá chậm, nguồn camera)
+        self.q = queue.Queue(maxsize=64)
         self.out = deque(maxlen=256)                        # (t, điểm cửa sổ, logit nhóm)
         self.lock = threading.Lock()
         self.running = True
@@ -69,11 +71,14 @@ class SceneScorer:
         return (lambda x: sess.run(None, {name: x})[0]), "onnxruntime"
 
     def submit(self, t, frame_bgr):
-        """Đẩy 1 frame (BGR) vào hàng đợi; hàng đầy thì bỏ frame cũ nhất (độ trễ không tăng mãi)."""
+        """Đẩy 1 frame (BGR) vào hàng đợi. KHÔNG bỏ frame để giữ lưới thời gian đều (video, cửa sổ phải liền mạch).
+        Chỉ khi hàng đợi đầy quá 2 s (máy quá chậm) mới bỏ frame cũ nhất và đếm lại."""
         item = (t, S.prep(frame_bgr))
+        self.n_in += 1
         try:
-            self.q.put_nowait(item)
+            self.q.put(item, timeout=2.0)
         except queue.Full:
+            self.n_dropped += 1
             try:
                 self.q.get_nowait()
             except queue.Empty:
@@ -122,6 +127,7 @@ class SceneDetector(Detector):
                 print(f"[scene] chua co mo hinh luong 2 ({e}) -> TAT luong 2")
         self.run, self.fired, self.run_groups = 0, False, []
         self.last_score, self.last_group, self.n_windows = None, None, 0
+        self.history = []                                   # (t_khung_cuoi, điểm, nhóm gợi ý) cho mọi cửa sổ
 
     def update(self, frame, tracks, t):
         if self.scorer is None:
@@ -133,6 +139,7 @@ class SceneDetector(Detector):
             self.n_windows += 1
             self.last_score = s
             self.last_group = self.scorer.groups[int(np.argmax(g))]
+            self.history.append((ts, s, self.last_group))
             if s > self.threshold:
                 self.run += 1
                 self.run_groups.append(g)
@@ -153,5 +160,12 @@ class SceneDetector(Detector):
                 f"  cua so: {self.n_windows} | chuoi vuot nguong: {self.run}/{self.min_consec}"]
 
     def close(self):
-        if self.scorer is not None:
-            self.scorer.close()
+        if self.scorer is None:
+            return
+        if self.n_windows == 0:
+            need = self.scorer.win
+            print(f"[scene] CANH BAO: khong co cua so nao. Da nhan {self.scorer.n_in} khung 2 FPS, can {need} khung "
+                  f"(~{need / 2:.0f} s) moi co 1 cua so. Video qua ngan -> luong 2 khong the bao.")
+        if self.scorer.n_dropped:
+            print(f"[scene] CANH BAO: da bo {self.scorer.n_dropped} khung (may qua cham)")
+        self.scorer.close()

@@ -46,6 +46,11 @@ def main():
     sampler = FpsSampler(cfg["sample_fps"])
     manager = EventManager(build_detectors(cfg), **cfg["events"])
     fight_det = next((d for d in manager.detectors if d.name == "fight"), None)
+    if cam.is_file and any(d.name == "scene" for d in manager.detectors):
+        n_fr = cam.cap.get(cv2.CAP_PROP_FRAME_COUNT)
+        if n_fr > 0 and (n_fr - 1) / cam.fps < 7.5:          # 16 khung 2 FPS: khung cuối ở t = 7.5 s
+            print(f"[canh bao] Video chi {n_fr / cam.fps:.1f} s: luong 2 can 16 khung 2 FPS (khung cuoi o 7.5 s) "
+                  f"-> se KHONG co cua so nao")
     print("Detector:", ", ".join(d.name for d in manager.detectors) or "(chua co)")
     uc = cfg["ui"]
     ui = UI(uc["font_size"], uc["kpt_conf"], uc["panel_width"], uc["new_sec"])

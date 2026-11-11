@@ -153,6 +153,12 @@ Lệnh chạy (từ thư mục `httm`): `python realtime/main.py [nguồn]` – 
   Hiệu chỉnh ngưỡng: `realtime/tools/calibrate_scene.py` (ghi điểm 10–20 phút cảnh bình thường).
   FPS luồng 1 khi bật luồng 2 chênh trong nhiễu đo (≤ ~3%).
 
+**CHẠY NHANH (2026-11-11):** `detectors/running.py` (ưu tiên 55): tốc độ ngang + dọc (ln L, chỉ tính khi
+|ln(L_cuối/L_đầu)| trên đường khớp ≥ `min_scale_change`), động tác chân, hướng ổn định; chặn nhảy ID / ID mới / rung camera /
+đang đánh nhau (EMA ≥ `fight_suppress` + 2 s) / HOẢNG LOẠN. Hiệu chỉnh: `tools/speed_probe.py <video>`.
+**Chẩn đoán luồng 2:** `tools/scene_score_video.py <video|thư mục> [--compare] [--split-list Anomaly_Test.txt]`
+(điểm offline 2 FPS, cửa sổ 16 bước 1, bảng + CSV vào `kaggle/results/`). Realtime lệch offline TB 0.06 điểm.
+
 **Còn lại:**
 - Thử webcam với **2 người thật** (Mốc C): giả vờ đánh nhau → báo đúng cặp, khung đỏ; mẫu âm khó (ôm, đập tay, bắt tay).
 - Thử **té ngã toàn thân** (camera thấy cả người) và ÔM ĐẦU ở khoảng cách xa (hiện chỉ báo khi ngồi gần camera).
