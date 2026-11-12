@@ -13,10 +13,16 @@ giám sát khi phát hiện hành vi bất thường. Mỗi cảnh báo được
 | 6 | VẪY TAY CẦU CỨU | Luật tư thế: tay trên vai vẫy qua lại ≥ 5 lần trong 3 s |
 | 7 | NẰM BẤT ĐỘNG | Luật tư thế: thân nằm ngang, gần như không cử động ≥ 10 s |
 | 8 | ÔM ĐẦU / GỤC ĐẦU | Luật tư thế: 2 tay ôm đầu hoặc đầu gục thấp hơn vai ≥ 10 s |
+| 9 | CHẠY NHANH | Luật khung xương: tốc độ ngang + tốc độ lại gần/ra xa camera (theo kích thước người), động tác chân, hướng ổn định |
+| 10 | CẢNH BẤT THƯỜNG: <nhóm> | **Luồng 2**: MobileNetV3 + MIL train trên UCF-Crime, nhìn cả khung hình (cướp, cháy nổ, đột nhập, tai nạn…) |
 
-Pipeline: YOLOv8n-pose (OpenVINO, ~10–20 ms/frame) + ByteTrack trên **mọi frame** → chuỗi khung xương lấy mẫu
-**15 FPS theo thời gian** → các detector → `EventManager` (ưu tiên, nâng cấp, chống báo trùng) → giao diện OpenCV,
-SQLite, ảnh, clip.
+Hai luồng chạy song song:
+- **Luồng 1 – khung xương:** YOLOv8n-pose (OpenVINO, ~10–20 ms/frame) + ByteTrack trên **mọi frame** → chuỗi khung
+  xương lấy mẫu **15 FPS theo thời gian** → các detector (loại 1–9).
+- **Luồng 2 – cả cảnh:** luồng nền lấy **2 FPS**, MobileNetV3-Large (OpenVINO) → cửa sổ 16 frame (~8 s) → điểm bất
+  thường + gợi ý nhóm (loại 10). Không làm giảm FPS luồng 1.
+
+Kết quả 2 luồng vào `EventManager` (ưu tiên, nâng cấp, chống báo trùng) → giao diện OpenCV, SQLite, ảnh, clip.
 
 ---
 
@@ -44,8 +50,10 @@ python realtime/tools/benchmark.py --backend openvino
 Lệnh tự tải `yolov8n-pose.pt`, export OpenVINO (imgsz 416) vào `realtime/models/yolov8n-pose_openvino_model/`,
 rồi mở webcam đo FPS (bấm `q` để thoát). `run.bat` cũng tự làm bước này nếu chưa có mô hình.
 
-Mô hình đánh nhau `realtime/models/pair_tcn.onnx` + `fight_config.json` **có sẵn trong repo**. Nếu thiếu 2 file này,
-hệ thống tự dùng luật giả (2 người đứng gần + cổ tay chuyển động nhanh) để vẫn chạy được.
+Các mô hình tự train **có sẵn trong repo** (`realtime/models/`), không cần tải thêm:
+- Đánh nhau: `pair_tcn.onnx` + `fight_config.json`. Nếu thiếu, hệ thống tự dùng luật giả (2 người đứng gần + cổ tay
+  chuyển động nhanh) để vẫn chạy được.
+- Luồng 2: `scene_backbone.onnx`, `scene_head.onnx`, `scene_config.json`. Nếu thiếu, luồng 2 tự tắt.
 
 ---
 
@@ -73,8 +81,11 @@ Tuỳ chọn: `--no-show` (không mở cửa sổ), `--frames N` (dừng sau N f
 | `d` | Bật/tắt **chế độ debug**: hiện trên khung mỗi người bộ đếm hiện tại của từng luật (để chỉnh ngưỡng) |
 
 ### Giao diện
-- Bên trái: video, khung xương, ID mỗi người. **Khung đỏ** = cặp đang đánh nhau.
-- Panel phải: FPS camera / xử lý, thời gian YOLO, số người; **CẢNH BÁO GẦN ĐÂY** (tô đỏ trong 10 s đầu).
+- **Video (bên trái):** khung xương 2 màu (trái xanh dương, phải cam), ID mỗi người. Màu khung: xanh lá = bình thường,
+  cam = đang trong một cảnh báo, **đỏ = cặp đang đánh nhau**. Khi có cảnh báo: **băng cảnh báo** trên đầu video và viền
+  nhấp nháy trong 5 s (màu theo mức ưu tiên). Video nhỏ (vd 320×240) tự phóng lên 540 px để panel đủ chỗ.
+- **Panel (bên phải):** đồng hồ + trạng thái (ĐANG GIÁM SÁT / CÓ CẢNH BÁO), 4 ô số liệu (FPS camera, FPS xử lý, số người,
+  YOLO ms), thanh điểm luồng 2 so với ngưỡng, danh sách **CẢNH BÁO GẦN ĐÂY** dạng thẻ (nhãn MỚI trong 10 s đầu).
 - Mỗi cảnh báo lưu vào `realtime/events/`: `events.db` (SQLite), `snapshots/*.jpg`, `clips/*.mp4` (3 s trước + 2 s sau).
 
 ---
@@ -95,8 +106,6 @@ Tuỳ chọn: `--no-show` (không mở cửa sổ), `--frames N` (dừng sau N f
 3. DroidCam Client tạo một **webcam ảo**. Chạy `python realtime/main.py 1` (thử `0`, `2` nếu số khác là webcam laptop).
 
 Lưu ý: DroidCam **không** phát luồng `http://…/video` cho trình duyệt như IP Webcam; địa chỉ `IP:4747` chỉ dùng cho DroidCam Client.
-
-**IP Webcam (Android)**: cài app, *Start server*, rồi `python realtime/main.py http://<ip>:8080/video`.
 
 Nếu mất tín hiệu quá 3 s chương trình tự dừng và lưu phiên làm việc.
 
@@ -129,10 +138,18 @@ Chạy đúng pipeline realtime (không hiển thị, không ghi DB) trên mọi
 | `fall_` | TÉ NGÃ | `wave_` | VẪY TAY CẦU CỨU |
 | `fallstill_` | TÉ NGÃ RỒI NẰM BẤT ĐỘNG | `still_`, `lying_` | NẰM BẤT ĐỘNG |
 | `panic_` | HOẢNG LOẠN | `distress_`, `headhold_` | ÔM ĐẦU / GỤC ĐẦU |
+| `run_`, `running_` | CHẠY NHANH | | |
 | `nonfight_`, `normal_`, `neg_` | mẫu âm (không được báo gì) | khác | chạy nhưng không tính điểm |
 
 Kết quả ghi vào `kaggle/results/`: `eval_<thư mục>_<thời gian>_clips.csv` (mỗi video: cảnh báo, thời điểm, EMA đánh
 nhau lớn nhất, FPS, số người) và `..._metrics.csv` (precision / recall / F1 / độ trễ trung bình theo loại, mức clip).
+
+### Công cụ hiệu chỉnh khác
+```powershell
+python realtime/tools/speed_probe.py <video>             # CHẠY NHANH: tốc độ ngang/dọc/tổng từng ID mỗi giây + CSV
+python realtime/tools/scene_score_video.py <video|thư mục> [--compare]   # luồng 2: điểm từng cửa sổ, bảng + CSV
+python realtime/tools/calibrate_scene.py 0 --minutes 15  # luồng 2: ghi điểm cảnh BÌNH THƯỜNG, đề xuất ngưỡng
+```
 
 ---
 
@@ -145,7 +162,9 @@ nhau lớn nhất, FPS, số người) và `..._metrics.csv` (precision / recall
 | `sample_fps` | 15 – chuỗi khung xương đưa vào detector (phải khớp lúc train) |
 | `events` | Cooldown 10 s, ưu tiên khi đang đánh nhau, nâng cấp té ngã |
 | `full_body` | Điều kiện "thấy đủ thân" để xét té ngã / nằm bất động |
-| `detectors` | Bật/tắt và ngưỡng từng detector (`fight`, `fall`, `pose_rules`, `panic`) |
+| `detectors` | Bật/tắt và ngưỡng từng detector (`fight`, `fall`, `pose_rules`, `scene`, `panic`, `running`) |
+| `detectors.scene.threshold` | Ngưỡng luồng 2 (điểm là logit, không phải 0..1) – nên hiệu chỉnh bằng `calibrate_scene.py` trên camera thật |
+| `ui` | Cỡ chữ, độ rộng panel, thời gian băng cảnh báo (`alert_sec`), chiều cao tối thiểu khi vẽ (`min_height`) |
 | `recorder` | Clip quanh sự kiện: 3 s trước + 2 s sau, 15 FPS |
 
 Tiêu chí ghép cặp người cho mô hình đánh nhau nằm **duy nhất** trong `realtime/shared/features.py::PARAMS`;
@@ -168,6 +187,14 @@ Quy trình (chi tiết trong notebook):
    rồi `QUICK = False` → Save & Run All.
 4. Tải `pair_tcn.onnx` + `fight_config.json` về `realtime/models/`, các file kết quả về `kaggle/results/`.
 
+### Luồng 2 – cảnh bất thường (UCF-Crime)
+- **Dữ liệu:** UCF-Crime (split chính thức: train 810 video bất thường + 800 Normal, test 140 + 150), thêm RWF NonFight
+  và RLVS NonViolence làm mẫu bình thường.
+- **Mô hình:** MobileNetV3-Large pretrained ImageNet (đóng băng) → 960 chiều/frame ở 2 FPS → cửa sổ 16 frame → MLP,
+  học bằng ranking loss MIL (Sultani 2018) + head 5 nhóm (BẠO LỰC, CƯỚP, CHÁY NỔ, ĐỘT NHẬP/TRỘM, TAI NẠN).
+- Notebook: `kaggle/04_scene_features.ipynb` (trích đặc trưng) và `kaggle/05_scene_train.ipynb` (train + xuất ONNX),
+  sinh bởi `realtime/tools/build_scene_notebooks.py` và `build_scene_train.py`.
+
 ---
 
 ## 8. Kết quả hiện tại
@@ -189,6 +216,9 @@ clip mà YOLO chỉ bắt được 1 người thì không thể báo.
 **Realtime trên 6 clip RWF val** (`evaluate.py`, imgsz 416): đúng 5/6 – không báo nhầm clip nào (precision 1.00),
 báo 2/3 clip đánh nhau (recall 0.67), độ trễ báo trung bình 2.7 s.
 
+**Luồng 2 (UCF-Crime test):** AUC mức video 0.906, AUC mức cửa sổ 0.749, báo nhầm trên video Normal 7.3%; phân nhóm
+đúng ~40% (tên nhóm chỉ là gợi ý).
+
 **Tốc độ (Intel i5-13500H, CPU):** webcam 640×480 ~30 FPS; video 1280×720 có 4–9 người ~19 FPS
 (giới hạn bởi YOLO + giải mã video; mô hình đánh nhau chỉ thêm vài ms mỗi lượt).
 
@@ -203,6 +233,9 @@ python realtime/tests/test_pose_rules.py   # giơ tay, vẫy tay, vò đầu...
 python realtime/tests/test_body_rules.py   # chống báo nhầm khi ngồi gần camera, té ngã toàn thân
 python realtime/tests/test_recorder.py     # clip quanh sự kiện
 python realtime/tests/test_evaluate.py     # nhãn + precision/recall của evaluate.py
+python realtime/tests/test_running.py      # chạy nhanh (chạy ngang/lại gần/ra xa, đi bộ, đứng dậy, nhảy, đánh nhau...)
+python realtime/tests/test_scene.py        # luồng 2: nhận lớp, chia tập, tiền xử lý ảnh
+python realtime/tests/test_scene_detector.py   # luồng 2: logic cảnh báo
 ```
 
 ---
@@ -212,16 +245,16 @@ python realtime/tests/test_evaluate.py     # nhãn + precision/recall của eval
 ```
 httm/
 ├── run.bat, README.md, requirements.txt, CLAUDE.md (đặc tả + tiến độ)
-├── kaggle/            02_train.ipynb (sinh tự động), results/ (kết quả train + đánh giá)
+├── kaggle/            02_train / 04_scene_features / 05_scene_train .ipynb (sinh tự động), results/
 ├── data_selfrecorded/ video tự quay / video kiểm tra (không đưa lên git)
 └── realtime/
     ├── main.py, config.yaml
     ├── core/          camera, pose (YOLO + ByteTrack), ui, events (EventManager), db (SQLite), recorder
-    ├── detectors/     base, fight (Pair-TCN ONNX), fall, pose_rules, panic
-    ├── shared/        sampling.py, features.py – dùng chung realtime + Kaggle
+    ├── detectors/     base, fight (Pair-TCN ONNX), fall, pose_rules, panic, running, scene (luồng 2)
+    ├── shared/        sampling.py, features.py, scene.py – dùng chung realtime + Kaggle
     ├── trackers/      bytetrack_httm.yaml
-    ├── models/        pair_tcn.onnx, fight_config.json (+ YOLO tự tạo, không có trong git)
-    ├── tools/         benchmark, review, evaluate, build_kaggle_notebook
+    ├── models/        pair_tcn.onnx, fight_config.json, scene_*.onnx, scene_config.json (+ YOLO tự tạo, không có trong git)
+    ├── tools/         benchmark, review, evaluate, speed_probe, scene_score_video, calibrate_scene, build_*_notebook
     ├── tests/         unit test + dữ liệu giả
     └── events/        events.db, snapshots/, clips/ (sinh ra khi chạy, không đưa lên git)
 ```
@@ -234,4 +267,6 @@ httm/
 - Ngồi sát webcam không thấy đủ thân → luật té ngã / nằm bất động tạm bỏ qua (có chủ đích, tránh báo nhầm).
 - Đang làm: fine-tune bằng video tự quay (đánh nhau dàn dựng + mẫu âm khó: ôm nhau, đập tay, vươn vai...),
   đánh giá luật trên UR Fall / Le2i (té ngã) và UMN (hoảng loạn).
-- Hướng phát triển: đồ vật bị bỏ lại, cháy/khói, vũ khí, phá hoại/trộm đồ, backend web xem lịch sử cảnh báo.
+- Luồng 2: điểm trên video ngoài UCF-Crime (camera khác, video tải từ mạng) có thể rất thấp → ngưỡng phải hiệu chỉnh
+  theo từng camera; cần video ≥ 7.5 s mới có cửa sổ đầu tiên.
+- Hướng phát triển: đồ vật bị bỏ lại, cháy/khói bằng YOLO riêng, vũ khí, backend web xem lịch sử cảnh báo.
